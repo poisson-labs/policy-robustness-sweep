@@ -1,0 +1,38 @@
+{
+  "run_id": "20260813T155006Z",
+  "checkpoint": "converged",
+  "env_name": "Go1JoystickFlatTerrain",
+  "eval_seed": 0,
+  "episode_length_cap": 1000,
+  "deterministic_policy": true,
+  "stats": {
+    "episodes": 8.0,
+    "reward_mean": 30.30024653166356,
+    "reward_std": 0.5358969637061606,
+    "reward_min": 29.606781105627306,
+    "reward_max": 31.542597588384524,
+    "length_mean": 1000.0
+  },
+  "rewards": [
+    30.534444012970198,
+    29.606781105627306,
+    29.88255065307021,
+    30.144770611859713,
+    30.279497716692276,
+    31.542597588384524,
+    30.231561158318073,
+    30.179769406386185
+  ],
+  "lengths": [
+    1000,
+    1000,
+    1000,
+    1000,
+    1000,
+    1000,
+    1000,
+    1000
+  ],
+  "clip": "nominal-gait-converged.mp4",
+  "render_error": ""
+}
