@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Local artifacts (measured outputs are committed deliberately under docs/measurements/)
+*.rrd
+*.ckpt
+node_modules/
+web/dist/
