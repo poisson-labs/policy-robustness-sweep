@@ -14,12 +14,10 @@ Wiring mirrors mujoco_playground/learning/train_jax_ppo.py (fetched 2026-08-13):
 registry.load → locomotion_params.brax_ppo_config → brax ppo.train with
 randomization_fn=registry.get_domain_randomizer(...), wrapper for episode handling.
 
-Version pins: top-level packages pinned exactly below. jax is constrained (not exactly
-pinned) for the first smoke run because playground 0.2.0's docs recommend jax[cuda12]
-while jax's current release moved to cuda13 extras — the smoke run records the full
-resolved environment (pip freeze) to the Volume, and the exact pins get committed from
-that record before the full run (DEVLOG 2026-08-13). A runtime GPU assertion guards
-against a silent CPU-only jax install.
+Version pins: top-level packages pinned exactly below (jax pin derived from the jax
+changelog after smoke run 4 hit the device_put_replicated removal). Every run records
+the full resolved environment to the Volume; the README pin table is written from that
+record. A runtime GPU assertion guards against a silent CPU-only jax install.
 """
 
 from __future__ import annotations
@@ -45,10 +43,32 @@ app = modal.App("opw-train")
 
 checkpoints = modal.Volume.from_name(VOLUME_NAME, create_if_missing=True, version=2)
 
-train_image = modal.Image.debian_slim(python_version="3.12").uv_pip_install(
-    "playground==0.2.0",
-    "brax==0.14.2",
-    "jax[cuda12]<0.12",
+
+def _bake_menagerie() -> None:
+    """Build-time download of MuJoCo Menagerie assets (playground git-clones them lazily
+    at env load; the runtime container must not depend on git or network — smoke run 3
+    failed exactly there)."""
+    from mujoco_playground._src import mjx_env
+
+    mjx_env.ensure_menagerie_exists()
+
+
+train_image = (
+    modal.Image.debian_slim(python_version="3.12")
+    .apt_install("git")
+    .uv_pip_install(
+        "playground==0.2.0",
+        "brax==0.14.2",
+        # jax 0.10.0 removed device_put_replicated, which brax 0.14.2 calls (smoke run 4
+        # failed there); 0.9.2 (2026-03-18) is the newest release before the removal and
+        # contemporaneous with brax 0.14.2 — source: docs.jax.dev changelog + PyPI dates,
+        # fetched 2026-08-13.
+        "jax[cuda12]==0.9.2",
+    )
+    .run_function(_bake_menagerie)
+    # Modal auto-mounts only the entrypoint file; the train package must be added
+    # explicitly for in-container imports (first smoke run failed exactly here).
+    .add_local_python_source("train")
 )
 
 
@@ -59,7 +79,7 @@ train_image = modal.Image.debian_slim(python_version="3.12").uv_pip_install(
     volumes={VOLUME_MOUNT: checkpoints},
 )
 def train(smoke: bool = False) -> dict[str, Any]:
-    import subprocess
+    from importlib import metadata
     from pathlib import Path
 
     import jax
@@ -81,14 +101,16 @@ def train(smoke: bool = False) -> dict[str, Any]:
     ckpt_dir.mkdir(parents=True, exist_ok=True)
 
     # Record the fully resolved environment — source for the exact pins we commit.
-    freeze = subprocess.run(
-        ["uv", "pip", "freeze", "--system"], capture_output=True, text=True, check=False
+    # (importlib.metadata, not a subprocess: uv/pip binaries aren't guaranteed in the
+    # runtime container — the second smoke attempt failed exactly there.)
+    frozen = "\n".join(
+        sorted(
+            f"{dist.metadata['Name']}=={dist.version}"
+            for dist in metadata.distributions()
+            if dist.metadata["Name"]
+        )
     )
-    frozen = freeze.stdout if freeze.returncode == 0 else ""
-    if not frozen:
-        pip_freeze = subprocess.run(["pip", "freeze"], capture_output=True, text=True, check=True)
-        frozen = pip_freeze.stdout
-    (run_dir / "resolved-environment.txt").write_text(frozen)
+    (run_dir / "resolved-environment.txt").write_text(frozen + "\n")
 
     # Verbatim DR/config capture (spec §8) — fail the run if capture fails.
     dr_record = capture_go1_dr_record()
