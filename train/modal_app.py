@@ -53,7 +53,10 @@ def _bake_menagerie() -> None:
     mjx_env.ensure_menagerie_exists()
 
 
-train_image = (
+# Shared base: build steps only, no local files — derived images (verify/render) append
+# their own build steps, then EVERY app adds local python source LAST (Modal forbids
+# build steps after add_local_*).
+base_image = (
     modal.Image.debian_slim(python_version="3.12")
     .apt_install("git")
     .uv_pip_install(
@@ -66,10 +69,11 @@ train_image = (
         "jax[cuda12]==0.9.2",
     )
     .run_function(_bake_menagerie)
-    # Modal auto-mounts only the entrypoint file; the train package must be added
-    # explicitly for in-container imports (first smoke run failed exactly here).
-    .add_local_python_source("train")
 )
+
+# Modal auto-mounts only the entrypoint file; the train package must be added
+# explicitly for in-container imports (first smoke run failed exactly here).
+train_image = base_image.add_local_python_source("train")
 
 
 @app.function(
