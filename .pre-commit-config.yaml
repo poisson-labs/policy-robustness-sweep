@@ -1,0 +1,33 @@
+# All hooks run through `uv run` so tool versions come from uv.lock — one source of truth,
+# no drift between pre-commit, local runs, and CI.
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-format
+        name: ruff format
+        entry: uv run ruff format
+        language: system
+        types: [python]
+      - id: ruff-check
+        name: ruff check
+        entry: uv run ruff check --fix
+        language: system
+        types: [python]
+      - id: pyright
+        name: pyright
+        entry: uv run pyright
+        language: system
+        pass_filenames: false
+        types: [python]
+      - id: rerun-versions
+        name: rerun SDK == vendored viewer
+        entry: uv run python -m ci.check_rerun_versions
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: measured-numbers
+        name: no unsourced numbers in post drafts
+        entry: uv run python -m ci.check_measured_numbers
+        language: system
+        pass_filenames: false
+        always_run: true
