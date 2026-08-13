@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "modal>=1.5.4",
+    "pydantic>=2.13.4",
 ]
 
 [dependency-groups]
