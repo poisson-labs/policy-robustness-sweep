@@ -4,7 +4,9 @@ version = "0.0.1"
 description = "One Policy, 400 Worlds — quadruped failure-boundary sweep with a live probe artifact (Poisson Labs flagship)"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "modal>=1.5.4",
+]
 
 [dependency-groups]
 dev = [
