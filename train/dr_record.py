@@ -21,6 +21,10 @@ from typing import Any
 GO1_DR_SOURCE_FILES = [
     "_src/locomotion/go1/randomize.py",
     "config/locomotion_params.py",
+    # The env task file: holds default_config incl. pert_config (enable=False by default
+    # — decides §8's "every shove is out-of-distribution" claim, so it must be in the
+    # verbatim record, not just cited from upstream).
+    "_src/locomotion/go1/joystick.py",
 ]
 
 
