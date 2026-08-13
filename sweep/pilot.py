@@ -90,7 +90,7 @@ def run_pilot(run_id: str, checkpoint: str = "converged") -> dict[str, Any]:
     mass_kg = float(env.mj_model.body_subtreemass[torso_id])
     g = float(abs(env.mj_model.opt.gravity[2]))
     default_mu = float(env.mj_model.geom_friction[floor_id, 0])
-    steps = int(round(ROLLOUT_S / env.dt))
+    steps = round(ROLLOUT_S / env.dt)
 
     normalize = lambda x, y: x  # noqa: E731
     if ppo_params.get("normalize_observations", False):
@@ -166,7 +166,7 @@ def run_pilot(run_id: str, checkpoint: str = "converged") -> dict[str, Any]:
     )  # (7*4,) — one force per (push, seed) pair
     records: list[dict[str, Any]] = []
     for mu in PILOT_FRICTIONS:
-        env._mjx_model = patch_floor_friction(base_mjx_model, floor_id, mu)  # noqa: SLF001
+        env._mjx_model = patch_floor_friction(base_mjx_model, floor_id, mu)
         states = batch_reset(seed0=int(mu * 1000), n=len(PILOT_PUSH_PCTS) * PILOT_SEEDS)
         tracks = rollout(states, force_grid)
         np.savez_compressed(out_dir / f"tracks-mu{mu:.2f}.npz", **tracks)
@@ -189,7 +189,7 @@ def run_pilot(run_id: str, checkpoint: str = "converged") -> dict[str, Any]:
                     "diverged_at_s": None if diverged < 0 else round((diverged + 1) * dt, 4),
                 }
             )
-    env._mjx_model = base_mjx_model  # noqa: SLF001
+    env._mjx_model = base_mjx_model
 
     manifest = {
         "run_id": run_id,
