@@ -31,8 +31,19 @@ in this project is measured — placeholders are written `MEASURED_TBD`.
 
 ## Version pins
 
-All Python pins live in `uv.lock` (committed). The Modal image, Rerun SDK/viewer, and
-JAX/CUDA pins will be recorded here as they are introduced (none exist yet).
+All local Python pins live in `uv.lock` (committed). The training image
+(`train/modal_app.py`) pins, verified from the smoke run's recorded resolved environment
+(docs/measurements/2026-08-13-g2-smoke-run.md):
+
+| package | version |
+|---|---|
+| playground | 0.2.0 |
+| brax | 0.14.2 |
+| jax / jaxlib (cuda12) | 0.9.2 |
+| mujoco / mujoco-mjx | 3.11.0 |
+
+(jax is capped below 0.10.0, which removed `jax.device_put_replicated` that brax 0.14.2
+still calls.) Rerun SDK/viewer pins arrive with G5/M3.
 
 ## Attribution
 
