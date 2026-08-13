@@ -49,6 +49,28 @@ compared to the training run's final eval. Pre-registered gate:
 
 The statistical gate passed in all four gate runs executed during this session.
 
+## Finding: the simulator disagrees with itself at identical seeds
+
+The gate's most interesting output is not the pass — it is a measured fact about GPU
+physics simulation that reshapes how every downstream number in this project should be
+read. **Two runs of the identical program with the identical PRNG seed do not produce
+identical results on GPU.** XLA schedules floating-point reductions nondeterministically;
+the per-operation differences are at the last-bit level, but 1000 steps of chaotic
+contact dynamics amplify them into episode-reward differences of up to 3.7e-3 relative
+(observed range 2.3e-4 – 3.7e-3 across identical-seed run pairs, including
+native-vs-native).
+
+Two design choices this measurement retroactively grounds:
+
+1. **The 16-seed statistical treatment (spec §6).** Individual rollouts were never
+   trustworthy objects — same-hardware, same-seed recomputation already varies. Per-cell
+   distributions with censoring-aware estimates are the only defensible currency, and
+   now that is measured fact rather than posture.
+2. **The reproducibility statement (spec §6).** The spec anticipated "cross-hardware
+   claims are statistical, not bitwise." Measurement shows this is true *on the same
+   hardware*: the pinned image reproduces the surface statistically, and bitwise claims
+   are not made at any level.
+
 ## Diagnostic (not gated) — same-seed evaluator comparison
 
 Two invocations of brax's Evaluator with the *same* PRNG key — one native, one through
