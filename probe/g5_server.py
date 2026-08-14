@@ -14,10 +14,40 @@ import modal
 VOLUME_MOUNT = "/vol"
 checkpoints = modal.Volume.from_name("opw-checkpoints", create_if_missing=True, version=2)
 
+RERUN_VIEWER_VERSION = "0.36.0"
+RERUN_VIEWER_TGZ_SHA256 = "3d517b20d264b2fdc0a073a002fca2560a9d7a0554fad1e0c027612fcd570c56"
+RERUN_VIEWER_TGZ_URL = (
+    f"https://registry.npmjs.org/@rerun-io/web-viewer/-/web-viewer-{RERUN_VIEWER_VERSION}.tgz"
+)
+
+
+def _fetch_viewer_assets() -> None:
+    """Image-build step: fetch the pinned viewer tarball from npm (immutable per
+    version), verify sha256, extract the runtime assets. Keeps the 48 MB wasm out of
+    git while runtime serving stays fully our-origin (DEVLOG Session 15). Backup copy
+    of the tarball: Volume opw-checkpoints /vendor-backup/."""
+    import hashlib
+    import shutil
+    import tarfile
+    import urllib.request
+
+    urllib.request.urlretrieve(RERUN_VIEWER_TGZ_URL, "/tmp/wv.tgz")
+    with open("/tmp/wv.tgz", "rb") as f:
+        digest = hashlib.sha256(f.read()).hexdigest()
+    assert digest == RERUN_VIEWER_TGZ_SHA256, f"viewer tarball sha256 mismatch: {digest}"
+    with tarfile.open("/tmp/wv.tgz") as tf:
+        tf.extractall("/tmp/wv", filter="data")
+    import os
+
+    os.makedirs("/assets/vendor/rerun", exist_ok=True)
+    for name in ("re_viewer.js", "re_viewer_bg.wasm", "index.js"):
+        shutil.copy(f"/tmp/wv/package/{name}", f"/assets/vendor/rerun/{name}")
+
+
 server_image = (
     modal.Image.debian_slim(python_version="3.12")
     .uv_pip_install("fastapi[standard]==0.141.1")
-    .add_local_dir("web/vendor/rerun", remote_path="/assets/vendor/rerun")
+    .run_function(_fetch_viewer_assets)
     .add_local_dir("web/g5", remote_path="/assets/g5")
 )
 

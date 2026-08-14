@@ -16,3 +16,9 @@ __pycache__/
 *.ckpt
 node_modules/
 web/dist/
+
+# Rerun viewer assets: fetched at image-build from the pinned npm tarball
+# (hash in web/vendor/rerun/SHA256SUMS); only VERSION + SHA256SUMS live in git.
+web/vendor/rerun/*
+!web/vendor/rerun/VERSION
+!web/vendor/rerun/SHA256SUMS
