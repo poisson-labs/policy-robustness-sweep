@@ -51,7 +51,7 @@ COMPOSITE_PUSHES = [60.0, 80.0, 100.0]
 @app.function(
     image=render_image,
     gpu="A100-80GB",
-    timeout=3600,
+    timeout=7200,  # first full render measured 3416 s; 3600 left no headroom (timed out)
     volumes={VOLUME_MOUNT: checkpoints},
 )
 def render_clips(
@@ -226,6 +226,7 @@ def render_clips(
         outputs["clips"].append(
             {"cell": stem, "ttf_s": ttf, "fail_bytes": size, "mobile_bytes": mobile_size}
         )
+        checkpoints.commit()  # persist per-clip: a timeout must not lose finished work
 
     # 2) 16-seed ghost overlay for the hero boundary cell
     model = patch_floor_friction(base_model, floor_id, GHOST_CELL["mu"])
