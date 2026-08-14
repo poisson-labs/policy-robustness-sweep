@@ -146,20 +146,71 @@ def render_clips(
     track_cam.distance = 1.7
     track_cam.elevation = -18.0
     track_cam.azimuth = 125.0
+    angle_cams = []
+    for az in (90.0, 135.0, 180.0):  # side / three-quarter / front (Taylor: more angles)
+        c3 = mujoco.MjvCamera()
+        c3.type = mujoco.mjtCamera.mjCAMERA_TRACKING
+        c3.trackbodyid = torso_id
+        c3.distance = 1.7
+        c3.elevation = -18.0
+        c3.azimuth = az
+        angle_cams.append(c3)
     # Ghost compositing needs ALIGNED frames: one FIXED camera for every seed (a
     # tracking camera would follow each seed's own torso — first-draft bug).
     fixed_cam = mujoco.MjvCamera()
     fixed_cam.type = mujoco.mjtCamera.mjCAMERA_FREE
-    fixed_cam.lookat[:] = [0.8, 0.0, 0.35]
-    fixed_cam.distance = 3.2
+    fixed_cam.lookat[:] = [0.0, 0.0, 0.35]  # aligned ghosts: onset at origin, heading +x
+    fixed_cam.distance = 3.8
     fixed_cam.elevation = -20.0
     fixed_cam.azimuth = 120.0
 
-    def frame_at(qpos: np.ndarray, r: Any, cam: Any = None) -> np.ndarray:
+    def frame_at(
+        qpos: np.ndarray,
+        r: Any,
+        cam: Any = None,
+        arrow_dir: tuple[float, float] | None = None,
+    ) -> np.ndarray:
         mj_data.qpos[:] = qpos
         mujoco.mj_forward(mj_model, mj_data)
         r.update_scene(mj_data, camera=cam if cam is not None else track_cam)
+        if arrow_dir is not None:
+            scene = r.scene
+            if scene.ngeom < scene.maxgeom:
+                geom = scene.geoms[scene.ngeom]
+                mujoco.mjv_initGeom(
+                    geom,
+                    mujoco.mjtGeom.mjGEOM_ARROW,
+                    np.zeros(3),
+                    np.zeros(3),
+                    np.zeros(9),
+                    np.array([0.86, 0.15, 0.15, 1.0], dtype=np.float32),
+                )
+                p_from = mj_data.xpos[torso_id].copy()
+                p_from[2] += 0.05
+                p_to = p_from + np.array([arrow_dir[0], arrow_dir[1], 0.0])
+                mujoco.mjv_connector(geom, mujoco.mjtGeom.mjGEOM_ARROW, 0.014, p_from, p_to)
+                scene.ngeom += 1
         return r.render()
+
+    def align_to_onset_frame(qpos_traj: np.ndarray, onset_i: int) -> np.ndarray:
+        """Rigidly transform the root so heading = +x and position = origin at push
+        onset. Ghosts then differ only by their RESPONSE to the shove, not by the
+        randomized spawn heading (Taylor's feedback: unaligned seeds 'dart randomly')."""
+        out = qpos_traj.copy()
+        x0, y0 = qpos_traj[onset_i, 0], qpos_traj[onset_i, 1]
+        qw, qx, qy, qz = qpos_traj[onset_i, 3:7]
+        yaw0 = np.arctan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz))
+        c, s = np.cos(-yaw0), np.sin(-yaw0)
+        dx, dy = qpos_traj[:, 0] - x0, qpos_traj[:, 1] - y0
+        out[:, 0] = c * dx - s * dy
+        out[:, 1] = s * dx + c * dy
+        rw, rz = np.cos(-yaw0 / 2.0), np.sin(-yaw0 / 2.0)
+        w2, x2, y2, z2 = (qpos_traj[:, i] for i in (3, 4, 5, 6))
+        out[:, 3] = rw * w2 - rz * z2
+        out[:, 4] = rw * x2 - rz * y2
+        out[:, 5] = rw * y2 + rz * x2
+        out[:, 6] = rw * z2 + rz * w2
+        return out
 
     def ttf_of(qpos_traj: np.ndarray) -> float | None:
         w, x, y, z = (qpos_traj[:, i] for i in (3, 4, 5, 6))
@@ -168,16 +219,38 @@ def render_clips(
         return classify_rollout(qpos_traj[:, 2], roll, pitch, dt).ttf_s
 
     def failure_window_frames(
-        qpos_traj: np.ndarray, ttf_s: float | None, r: Any
+        qpos_traj: np.ndarray,
+        ttf_s: float | None,
+        r: Any,
+        arrow_len: float = 0.0,
+        multi_angle: bool = False,
     ) -> list[np.ndarray]:
-        """t_push-0.5 → (t_fail+1 | push end+1.5 if censored), 4x slow-mo around failure."""
-        t_end = (ttf_s + 1.0) if ttf_s is not None else (push_start + PUSH_DURATION_S + 1.5)
+        """t_push-0.5 → (t_fail+0.5 | push end+1.5 if censored), 4x slow-mo around
+        failure. Post-failure footage is trimmed: the model is feet-only-collision
+        (training-sim property, DEVLOG Session 20), so toppled bodies sink through the
+        floor — the topple reads, the sink is clipped."""
+        t_end = (ttf_s + 0.5) if ttf_s is not None else (push_start + PUSH_DURATION_S + 1.5)
         i0 = max(0, int((push_start - 0.5) / dt))
         i1 = min(steps, int(t_end / dt))
+        qw, qx, qy, qz = (qpos_traj[:, i] for i in (3, 4, 5, 6))
+        yaws = np.arctan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz))
+        onset_i = max(0, int(push_start / dt))
+        angle = yaws[onset_i] + np.pi / 2.0  # push dial 90 deg relative to onset heading
         frames: list[np.ndarray] = []
         for i in range(i0, i1):
             t = (i + 1) * dt
-            frame = frame_at(qpos_traj[i], r)
+            in_window = push_start <= (i * dt) < push_start + PUSH_DURATION_S
+            arrow = (
+                (float(np.cos(angle)) * arrow_len, float(np.sin(angle)) * arrow_len)
+                if in_window
+                else None
+            )
+            if multi_angle:
+                frame = np.concatenate(
+                    [frame_at(qpos_traj[i], r, cam, arrow) for cam in angle_cams], axis=1
+                )
+            else:
+                frame = frame_at(qpos_traj[i], r, None, arrow)
             repeats = (
                 SLOWMO_FACTOR if ttf_s is not None and abs(t - ttf_s) <= SLOWMO_HALF_WINDOW_S else 1
             )
@@ -219,9 +292,10 @@ def render_clips(
         qpos = batched_rollout(model, [cell["seed"]], force_n)[0]
         ttf = ttf_of(qpos)
         stem = f"mu{cell['mu']:.2f}-push{int(cell['push_pct_bw'])}-seed{cell['seed_idx']}"
-        frames = failure_window_frames(qpos, ttf, renderer)
+        arrow_len = 0.9 * (cell["push_pct_bw"] / 100.0) ** 0.5  # matches replay arrows
+        frames = failure_window_frames(qpos, ttf, renderer, arrow_len, multi_angle=True)
         size = write_mp4(out_dir / f"fail-{stem}.mp4", frames)
-        mobile_frames = failure_window_frames(qpos, ttf, mobile_renderer)
+        mobile_frames = failure_window_frames(qpos, ttf, mobile_renderer, arrow_len)
         mobile_size = write_mp4(out_dir / f"mobile-{stem}.mp4", mobile_frames)
         outputs["clips"].append(
             {"cell": stem, "ttf_s": ttf, "fail_bytes": size, "mobile_bytes": mobile_size}
@@ -235,6 +309,8 @@ def render_clips(
         sweep_prng_seed(GHOST_CELL["mu"], GHOST_CELL["push_pct_bw"], s) for s in range(16)
     ]
     qpos_all = batched_rollout(model, ghost_seeds, force_n)
+    onset_i = max(0, int(2.0 / dt))
+    qpos_all = np.stack([align_to_onset_frame(qpos_all[s], onset_i) for s in range(16)])
     ghost_frames: list[np.ndarray] = []
     # static empty scene (fixed camera): robot dropped far below ground, rendered once
     hq = qpos_all[0][0].copy()
