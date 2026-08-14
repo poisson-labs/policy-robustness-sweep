@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>G5 viewer test — One Policy, 400 Worlds</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #0d0d10; color: #ddd;
+                 font-family: system-ui, sans-serif; }
+    #bar { padding: 8px 12px; font-size: 13px; display: flex; gap: 16px;
+           align-items: baseline; flex-wrap: wrap; }
+    #viewer { position: absolute; top: 40px; bottom: 0; left: 0; right: 0; }
+    #status b { color: #7dd3fc; }
+  </style>
+</head>
+<body>
+  <div id="bar">
+    <span>G5 mobile/wasm test — pinned Rerun viewer 0.36.0 (vendored, no CDN)</span>
+    <span id="status">loading…</span>
+  </div>
+  <div id="viewer"></div>
+  <script type="module">
+    // Measurement instrumentation for the G5 checklist: wall-clock to first frame and
+    // JS heap (where the browser exposes it) shown in-page so a phone tester can read
+    // them without devtools.
+    const t0 = performance.now();
+    const status = document.getElementById("status");
+    const params = new URLSearchParams(location.search);
+    // Absolute URL: the viewer resolves "/rrd/x" as a hostname, not a path (G5 finding).
+    const rrd = new URL(params.get("rrd") ?? "/rrd/default.rrd", location.origin).href;
+    try {
+      const { WebViewer } = await import("/vendor/rerun/index.js");
+      const viewer = new WebViewer();
+      // hide_welcome_screen: the welcome screen fetches example .rrds from app.rerun.io
+      // — an external request the shipped page must never make (G5 finding; M3's
+      // no-external-requests check depends on this).
+      await viewer.start(rrd, document.getElementById("viewer"), {
+        hide_welcome_screen: true,
+      });
+      const load_ms = Math.round(performance.now() - t0);
+      const mem = performance.memory
+        ? ` · JS heap ${(performance.memory.usedJSHeapSize / 1048576).toFixed(0)} MB`
+        : "";
+      status.innerHTML = `viewer started in <b>${load_ms} ms</b>${mem}`;
+    } catch (err) {
+      status.textContent = `FAILED: ${err}`;
+      console.error(err);
+    }
+  </script>
+</body>
+</html>
