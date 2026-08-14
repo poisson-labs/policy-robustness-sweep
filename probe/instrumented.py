@@ -1,18 +1,23 @@
-"""Instrumented single rollout → .rrd (G5 test artifact; core of the M2 live probe).
+"""Instrumented rollouts → .rrd replays (M1-03; core of the M2 live probe).
 
-Runs ONE world (WorldConfig semantics, same G3-verified physics path as the sweep) with
-full logging: mjx physics rollout, frozen-threshold classification, then CPU-MuJoCo
-kinematic replay logged to a Rerun recording saved on the Volume under
-rrd/<cache_key>.rrd. Measures and returns .rrd size (the R2-trigger data per §14 #2)
-and stage timings.
+Single-world entrypoint plus a batch entrypoint that runs the committed replay
+selection (15 boundary cells + 3 recoveries) in ONE container so the JIT compile is
+paid once. Each .rrd ships spec §9 features: blueprint with the camera TRACKING the
+trunk (no viewport hunting), collapsed side panels, timeline event markers (push
+start/end, failure), scalar tracks, and the push force drawn as a red arrow during
+the window (M1-03 requirements, DEVLOG Session 12/17).
 
-    uv run modal run probe/instrumented.py --run-id 20260813T155006Z \
-        --mu 0.5 --push-pct 90 --seed 0
+Rollout physics: lax.scan on the G3-verified push_step path (the per-step host-sync
+loop of the G5 prototype is gone; sim time drops from ~15 s to ~1 s warm).
+
+    uv run modal run probe/instrumented.py --run-id <id> --mu 0.5 --push-pct 90
+    uv run modal run probe/instrumented.py::batch --run-id <id>   # the 18 selections
 """
 
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 import modal
@@ -26,23 +31,23 @@ probe_image = base_image.uv_pip_install(
 app = modal.App("opw-probe")
 
 
+def _load_selection() -> dict[str, Any]:
+    """Local-side only (the batch entrypoint runs on this machine; the container has no
+    docs/ tree — the first batch launch failed exactly there)."""
+    path = Path(__file__).parent.parent / "docs/measurements/2026-08-14-replay-selection.json"
+    return json.loads(path.read_text())
+
+
 @app.function(
     image=probe_image,
     gpu="A100-80GB",
-    timeout=1200,
+    timeout=3600,
     volumes={VOLUME_MOUNT: checkpoints},
 )
-def instrumented_rollout(
-    run_id: str,
-    checkpoint: str = "converged",
-    mu: float | None = None,
-    push_pct: float = 0.0,
-    direction_deg: float = 90.0,
-    push_start_s: float = 2.0,
-    seed: int = 0,
-) -> dict[str, Any]:
+def instrumented_batch(
+    run_id: str, worlds: list[dict[str, Any]], checkpoint: str = "converged"
+) -> list[dict[str, Any]]:
     import time
-    from pathlib import Path
 
     import jax
     import jax.numpy as jnp
@@ -56,7 +61,14 @@ def instrumented_rollout(
     from mujoco_playground.config import locomotion_params
 
     from configs.world import PUSH_DURATION_S, ROLLOUT_S, WorldConfig
-    from probe.rrd_logger import log_event, log_scalars, log_static_scene, log_step
+    from probe.rrd_logger import (
+        log_event,
+        log_push_arrow,
+        log_scalars,
+        log_static_scene,
+        log_step,
+        replay_blueprint,
+    )
     from reduce.classify import Outcome, classify_rollout
     from sweep.injected_env import (
         find_body_id,
@@ -67,19 +79,8 @@ def instrumented_rollout(
     )
     from train.modal_app import ENV_NAME as env_name
 
-    timings: dict[str, float] = {}
-    t_start = time.monotonic()
-
-    world = WorldConfig.clamped(
-        friction=mu,
-        push_magnitude_pct_bw=push_pct,
-        push_direction_deg=direction_deg,
-        push_start_s=push_start_s,
-        seed=seed,
-    )
     run_dir = Path(VOLUME_MOUNT) / "runs" / run_id
     params = brax_model.load_params(str(run_dir / "checkpoints" / checkpoint))
-
     env_cfg = registry.get_default_config(env_name)
     ppo_params = locomotion_params.brax_ppo_config(env_name)
     network_config = dict(ppo_params.network_factory)
@@ -88,10 +89,14 @@ def instrumented_rollout(
     floor_id = find_floor_geom_id(env.mj_model)
     mass_kg = float(env.mj_model.body_subtreemass[torso_id])
     g = float(abs(env.mj_model.opt.gravity[2]))
-    if world.friction is not None:
-        env._mjx_model = patch_floor_friction(env.mjx_model, floor_id, world.friction)
+    base_model = env.mjx_model
     steps = round(ROLLOUT_S / env.dt)
     dt = float(env.dt)
+    mj_model = env.mj_model
+    trunk_geom_id = int(np.argmax(mj_model.geom_bodyid == torso_id))
+    trunk_entity = (
+        f"world/robot/{mj_model.geom(trunk_geom_id).name or f'geom{trunk_geom_id}'}_{trunk_geom_id}"
+    )
 
     normalize = lambda x, y: x  # noqa: E731
     if ppo_params.get("normalize_observations", False):
@@ -103,71 +108,114 @@ def instrumented_rollout(
         **network_config,
     )
     policy = ppo_networks.make_inference_fn(ppo_network)(params, deterministic=True)
-    force_n = jnp.asarray(world.push_magnitude_pct_bw / 100.0 * mass_kg * g)
-    direction_rad = jnp.deg2rad(jnp.asarray(world.push_direction_deg))
-    start_arr = jnp.asarray(world.push_start_s)
 
-    step_fn = jax.jit(
-        lambda s, a: push_step(env, s, a, force_n, direction_rad, start_arr, torso_id)
-    )
-    t0 = time.monotonic()
-    state = init_push_info(env.reset(jax.random.PRNGKey(world.seed)))
-    state.info["command"] = jnp.array([1.0, 0.0, 0.0])
-    state.info["steps_until_next_cmd"] = jnp.asarray(10_000, dtype=jnp.int32)
+    # One compiled rollout, model + push params traced → reused for every world.
+    def rollout(
+        model: Any, key: jax.Array, force_n: jax.Array, direction_rad: jax.Array, start_s: jax.Array
+    ) -> jax.Array:
+        env._mjx_model = model
+        state = init_push_info(env.reset(key))
+        state.info["command"] = jnp.array([1.0, 0.0, 0.0])
+        state.info["steps_until_next_cmd"] = jnp.asarray(10_000, dtype=jnp.int32)
 
-    qpos_hist: list[np.ndarray] = []
-    dummy_key = jax.random.PRNGKey(0)
-    for _ in range(steps):
-        action, _extras = policy(state.obs, dummy_key)
-        state = step_fn(state, action)
-        qpos_hist.append(np.asarray(state.data.qpos))
-    timings["sim_s"] = time.monotonic() - t0
+        def body(carry: Any, _: Any) -> tuple[Any, jax.Array]:
+            st = carry
+            action, _extras = policy(st.obs, jax.random.PRNGKey(0))
+            nst = push_step(env, st, action, force_n, direction_rad, start_s, torso_id)
+            return nst, nst.data.qpos
 
-    qpos_arr = np.stack(qpos_hist)  # (steps, nq)
-    w, x, y, z = qpos_arr[:, 3], qpos_arr[:, 4], qpos_arr[:, 5], qpos_arr[:, 6]
-    upz = 1.0 - 2.0 * (x * x + y * y)
-    roll = np.arctan2(2.0 * (w * x + y * z), 1.0 - 2.0 * (x * x + y * y))
-    pitch = np.arcsin(np.clip(2.0 * (w * y - z * x), -1.0, 1.0))
-    torso_z = qpos_arr[:, 2]
-    result = classify_rollout(torso_z, roll, pitch, dt)
+        _, qpos = jax.lax.scan(body, state, None, length=steps)
+        return qpos
 
-    # CPU kinematic replay → rerun
-    t0 = time.monotonic()
-    rr.init("one-policy-400-worlds", spawn=False)
-    mj_model = env.mj_model
-    mj_data = mujoco.MjData(mj_model)
-    log_static_scene(mj_model)
-    log_event(0.0, f"world: {world.cache_key()}")
-    log_event(float(world.push_start_s), f"push start ({world.push_magnitude_pct_bw:.0f}%BW)")
-    log_event(float(world.push_start_s + PUSH_DURATION_S), "push end")
-    if result.outcome is Outcome.FAILED and result.ttf_s is not None:
-        log_event(
-            result.ttf_s, f"FAILURE ({result.first_trigger}) — TTF {result.ttf_s:.2f}s", "ERROR"
+    rollout_jit = jax.jit(rollout)
+
+    results: list[dict[str, Any]] = []
+    for spec in worlds:
+        t_start = time.monotonic()
+        world = WorldConfig.clamped(
+            friction=spec.get("mu"),
+            push_magnitude_pct_bw=spec.get("push_pct_bw", 0.0),
+            push_direction_deg=spec.get("direction_deg", 90.0),
+            push_start_s=spec.get("push_start_s", 2.0),
+            seed=spec.get("seed", 0),
         )
-    for i in range(steps):
-        mj_data.qpos[:] = qpos_arr[i]
-        mujoco.mj_forward(mj_model, mj_data)
-        t_s = (i + 1) * dt
-        log_step(mj_model, mj_data, t_s)
-        log_scalars(t_s, float(torso_z[i]), float(upz[i]))
-    rrd_dir = Path(VOLUME_MOUNT) / "rrd"
-    rrd_dir.mkdir(exist_ok=True)
-    safe_key = world.cache_key().replace("|", "_").replace("=", "-")
-    rrd_path = rrd_dir / f"{safe_key}.rrd"
-    rr.save(str(rrd_path))
-    timings["log_s"] = time.monotonic() - t0
-    timings["total_s"] = time.monotonic() - t_start
-    checkpoints.commit()
+        model = base_model
+        if world.friction is not None:
+            model = patch_floor_friction(base_model, floor_id, world.friction)
+        force_n = world.push_magnitude_pct_bw / 100.0 * mass_kg * g
+        qpos_arr = np.asarray(
+            rollout_jit(
+                model,
+                jax.random.PRNGKey(world.seed),
+                jnp.asarray(force_n),
+                jnp.deg2rad(jnp.asarray(world.push_direction_deg)),
+                jnp.asarray(world.push_start_s),
+            )
+        )
+        sim_s = time.monotonic() - t_start
 
-    return {
-        "world": json.loads(world.model_dump_json()),
-        "cache_key": world.cache_key(),
-        "rrd_file": rrd_path.name,
-        "rrd_bytes": rrd_path.stat().st_size,
-        "outcome": result.outcome.value,
-        "ttf_s": result.ttf_s,
-        "timings_s": {k: round(v, 3) for k, v in timings.items()},
-    }
+        w, x, y, z = qpos_arr[:, 3], qpos_arr[:, 4], qpos_arr[:, 5], qpos_arr[:, 6]
+        upz = 1.0 - 2.0 * (x * x + y * y)
+        roll = np.arctan2(2.0 * (w * x + y * z), 1.0 - 2.0 * (x * x + y * y))
+        pitch = np.arcsin(np.clip(2.0 * (w * y - z * x), -1.0, 1.0))
+        torso_z = qpos_arr[:, 2]
+        outcome = classify_rollout(torso_z, roll, pitch, dt)
+
+        # push window + onset-yaw replication (numpy mirror of push_step semantics,
+        # for the arrow visualization only)
+        times = (np.arange(steps) + 1) * dt
+        pre_times = times - dt  # time at step invocation
+        active = (pre_times >= world.push_start_s) & (
+            pre_times < world.push_start_s + PUSH_DURATION_S
+        )
+        yaws = np.arctan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+        onset_idx = int(np.argmax(active)) if active.any() else 0
+        onset_yaw = float(yaws[onset_idx])
+        angle = onset_yaw + np.deg2rad(world.push_direction_deg)
+        arrow_len = 0.6 * world.push_magnitude_pct_bw / 100.0
+        vx, vy = arrow_len * np.cos(angle), arrow_len * np.sin(angle)
+
+        t0 = time.monotonic()
+        rr.init("one-policy-400-worlds", spawn=False, recording_id=world.cache_key())
+        mj_data = mujoco.MjData(mj_model)
+        log_static_scene(mj_model)
+        log_event(0.0, f"world: {world.cache_key()}")
+        log_event(float(world.push_start_s), f"push start ({world.push_magnitude_pct_bw:.0f}%BW)")
+        log_event(float(world.push_start_s + PUSH_DURATION_S), "push end")
+        if outcome.outcome is Outcome.FAILED and outcome.ttf_s is not None:
+            log_event(
+                outcome.ttf_s,
+                f"FAILURE ({outcome.first_trigger}) — TTF {outcome.ttf_s:.2f}s",
+                "ERROR",
+            )
+        for i in range(steps):
+            mj_data.qpos[:] = qpos_arr[i]
+            mujoco.mj_forward(mj_model, mj_data)
+            t_s = float(times[i])
+            log_step(mj_model, mj_data, t_s)
+            log_scalars(t_s, float(torso_z[i]), float(upz[i]))
+            log_push_arrow(
+                t_s, bool(active[i]), mj_data.xpos[torso_id].tolist(), float(vx), float(vy)
+            )
+        rrd_dir = Path(VOLUME_MOUNT) / "rrd"
+        rrd_dir.mkdir(exist_ok=True)
+        safe_key = world.cache_key().replace("|", "_").replace("=", "-")
+        rrd_path = rrd_dir / f"{safe_key}.rrd"
+        rr.save(str(rrd_path), default_blueprint=replay_blueprint(trunk_entity))
+        log_s = time.monotonic() - t0
+        checkpoints.commit()
+        results.append(
+            {
+                "cache_key": world.cache_key(),
+                "rrd_file": rrd_path.name,
+                "rrd_bytes": rrd_path.stat().st_size,
+                "outcome": outcome.outcome.value,
+                "ttf_s": outcome.ttf_s,
+                "sim_s": round(sim_s, 3),
+                "log_s": round(log_s, 3),
+            }
+        )
+    return results
 
 
 @app.local_entrypoint()
@@ -178,8 +226,18 @@ def main(
     push_pct: float = 0.0,
     seed: int = 0,
 ) -> None:
-    friction = None if mu < 0 else mu
-    out = instrumented_rollout.remote(
-        run_id=run_id, checkpoint=checkpoint, mu=friction, push_pct=push_pct, seed=seed
-    )
-    print(json.dumps(out, indent=2))
+    worlds = [{"mu": None if mu < 0 else mu, "push_pct_bw": push_pct, "seed": seed}]
+    print(json.dumps(instrumented_batch.remote(run_id, worlds, checkpoint), indent=2))
+
+
+@app.local_entrypoint()
+def batch(run_id: str, checkpoint: str = "converged") -> None:
+    selection = _load_selection()
+    worlds = [
+        {"mu": c["mu"], "push_pct_bw": c["push_pct_bw"], "seed": 0}
+        for c in selection["boundary_cells"]
+    ] + [
+        {"mu": r["mu"], "push_pct_bw": r["push_pct_bw"], "seed": r["seed_idx"]}
+        for r in selection["recoveries"]
+    ]
+    print(json.dumps(instrumented_batch.remote(run_id, worlds, checkpoint), indent=2))

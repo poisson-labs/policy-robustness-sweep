@@ -106,3 +106,42 @@ def log_scalars(t_s: float, torso_z: float, upz: float) -> None:
 def log_event(t_s: float, text: str, level: str = "INFO") -> None:
     rr.set_time(TIMELINE, duration=t_s)
     rr.log("events", rr.TextLog(text, level=level))
+
+
+def log_push_arrow(t_s: float, active: bool, origin_xyz: Any, vx: float, vy: float) -> None:
+    """Force visualization (M1-03): a red world-frame arrow anchored at the torso for
+    the duration of the push window; cleared outside it. Length encodes magnitude
+    (pre-scaled by the caller: 100%BW ≈ 0.6 m)."""
+    rr.set_time(TIMELINE, duration=t_s)
+    if active:
+        rr.log(
+            "world/push_force",
+            rr.Arrows3D(
+                origins=[origin_xyz],
+                vectors=[[vx, vy, 0.0]],
+                colors=[[220, 38, 38, 255]],
+                radii=[0.02],
+            ),
+        )
+    else:
+        rr.log("world/push_force", rr.Clear(recursive=False))
+
+
+def replay_blueprint(tracking_entity: str) -> Any:
+    """Default blueprint shipped inside each replay .rrd (M1-03 requirements): 3D view
+    with the camera tracking the trunk (no viewport hunting), side panels collapsed,
+    time panel kept for scrubbing."""
+    import rerun.blueprint as rrb
+
+    return rrb.Blueprint(
+        rrb.Spatial3DView(
+            origin="/world",
+            eye_controls=rrb.archetypes.EyeControls3D(
+                kind="Orbital",
+                tracking_entity=tracking_entity,
+                position=[1.6, -1.6, 0.9],
+                eye_up=[0.0, 0.0, 1.0],
+            ),
+        ),
+        collapse_panels=True,
+    )
