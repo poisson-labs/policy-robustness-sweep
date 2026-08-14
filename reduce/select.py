@@ -76,7 +76,7 @@ def select_recoveries(
         key = (r["mu"], r["push_pct_bw"])
         s = survival_by_cell.get(key)
         # Lower bound (DEVLOG Session 19): cells at S≈1/16 measured ZERO survivors on
-        # exact-seed re-simulation (GPU nondeterminism × binomial rarity) — a recovery
+        # exact-seed re-simulation (GPU nondeterminism x binomial rarity) — a recovery
         # replay must come from a cell where survivors are re-findable.
         if s is None or not (recovery_min_survival <= s <= recovery_max_survival):
             continue
