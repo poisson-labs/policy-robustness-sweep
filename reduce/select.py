@@ -63,6 +63,7 @@ def select_recoveries(
     records: list[dict[str, Any]],
     n: int = 3,
     recovery_max_survival: float = 0.5,
+    recovery_min_survival: float = 3.0 / 16.0,
 ) -> list[RecoveryRef]:
     """Surviving seeds inside mostly-falling cells, most dramatic first.
 
@@ -74,9 +75,21 @@ def select_recoveries(
     for r in records:
         key = (r["mu"], r["push_pct_bw"])
         s = survival_by_cell.get(key)
-        if s is None or not (0.0 < s <= recovery_max_survival):
+        # Lower bound (DEVLOG Session 19): cells at S≈1/16 measured ZERO survivors on
+        # exact-seed re-simulation (GPU nondeterminism × binomial rarity) — a recovery
+        # replay must come from a cell where survivors are re-findable.
+        if s is None or not (recovery_min_survival <= s <= recovery_max_survival):
             continue
         if r["fell_time_upz_s"] is None and r["diverged_at_s"] is None:
             candidates.append(RecoveryRef(r["mu"], r["push_pct_bw"], r["seed_idx"], s))
     candidates.sort(key=lambda c: (c.cell_survival, -c.push_pct_bw, c.mu, c.seed_idx))
-    return candidates[:n]
+    picked: list[RecoveryRef] = []
+    used_cells: set[tuple[float, float]] = set()
+    for c in candidates:  # one recovery per cell — three ghosts of one world is one story
+        if (c.mu, c.push_pct_bw) in used_cells:
+            continue
+        picked.append(c)
+        used_cells.add((c.mu, c.push_pct_bw))
+        if len(picked) >= n:
+            break
+    return picked

@@ -1,6 +1,6 @@
 {
   "source_manifest": "2026-08-13-cell-survival-manifest.json",
-  "rule": "reduce/select.py (S nearest 0.5, mu-row spread; recoveries = survivors in cells with S<=0.5, most dramatic first)",
+  "rule": "reduce/select.py (S nearest 0.5, mu-row spread; recoveries = survivors in cells with 3/16<=S<=0.5, one per cell, most dramatic first \u2014 rare-survivor cells excluded, DEVLOG Session 19)",
   "boundary_cells": [
     {
       "mu": 0.15,
@@ -80,22 +80,22 @@
   ],
   "recoveries": [
     {
-      "mu": 0.65,
-      "push_pct_bw": 120.0,
-      "seed_idx": 11,
-      "cell_survival": 0.0625
+      "mu": 0.8,
+      "push_pct_bw": 110.0,
+      "seed_idx": 1,
+      "cell_survival": 0.1875
     },
     {
-      "mu": 0.7,
-      "push_pct_bw": 120.0,
-      "seed_idx": 2,
-      "cell_survival": 0.0625
+      "mu": 0.9,
+      "push_pct_bw": 110.0,
+      "seed_idx": 7,
+      "cell_survival": 0.1875
     },
     {
-      "mu": 0.85,
-      "push_pct_bw": 120.0,
-      "seed_idx": 14,
-      "cell_survival": 0.0625
+      "mu": 0.95,
+      "push_pct_bw": 110.0,
+      "seed_idx": 10,
+      "cell_survival": 0.1875
     }
   ],
   "divergence_replay": "dropped - measured-empty on grid (DEVLOG Session 12)"
