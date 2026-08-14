@@ -111,7 +111,7 @@ def log_event(t_s: float, text: str, level: str = "INFO") -> None:
 def log_push_arrow(t_s: float, active: bool, origin_xyz: Any, vx: float, vy: float) -> None:
     """Force visualization (M1-03): a red world-frame arrow anchored at the torso for
     the duration of the push window; cleared outside it. Length encodes magnitude
-    (pre-scaled by the caller: 100%BW ≈ 0.6 m)."""
+    (pre-scaled by the caller; sublinear so small pushes stay visible)."""
     rr.set_time(TIMELINE, duration=t_s)
     if active:
         rr.log(
@@ -120,7 +120,7 @@ def log_push_arrow(t_s: float, active: bool, origin_xyz: Any, vx: float, vy: flo
                 origins=[origin_xyz],
                 vectors=[[vx, vy, 0.0]],
                 colors=[[220, 38, 38, 255]],
-                radii=[0.02],
+                radii=[0.035],
             ),
         )
     else:

@@ -172,7 +172,9 @@ def instrumented_batch(
         onset_idx = int(np.argmax(active)) if active.any() else 0
         onset_yaw = float(yaws[onset_idx])
         angle = onset_yaw + np.deg2rad(world.push_direction_deg)
-        arrow_len = 0.6 * world.push_magnitude_pct_bw / 100.0
+        # Bigger, sublinear with force (Taylor, 2026-08-14): sqrt scaling keeps a
+        # 10%BW nudge visible (~0.28 m) while a 200%BW shove stays ~1.3 m; 100%BW ≈ 0.9 m.
+        arrow_len = 0.9 * (world.push_magnitude_pct_bw / 100.0) ** 0.5
         vx, vy = arrow_len * np.cos(angle), arrow_len * np.sin(angle)
 
         t0 = time.monotonic()
