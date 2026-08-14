@@ -68,7 +68,25 @@ class TestRecoveries:
         assert select_recoveries(cells, records, n=3) == []
 
     def test_most_dramatic_first(self) -> None:
-        cells = [cell(0.5, 100, 0.4), cell(0.5, 120, 0.1)]
+        cells = [cell(0.5, 100, 0.4), cell(0.5, 120, 0.25)]
         records = [record(0.5, 100, 0, None), record(0.5, 120, 1, None)]
         picked = select_recoveries(cells, records, n=2)
         assert picked[0].push_pct_bw == 120  # lower survival cell first
+
+    def test_one_recovery_per_cell(self) -> None:
+        cells = [cell(0.8, 110, 0.19), cell(0.6, 100, 0.25)]
+        records = [
+            record(0.8, 110, 1, None),
+            record(0.8, 110, 12, None),
+            record(0.6, 100, 3, None),
+        ]
+        picked = select_recoveries(cells, records, n=3)
+        assert len(picked) == 2  # second survivor of the same cell not taken
+        assert {(p.mu, p.push_pct_bw) for p in picked} == {(0.8, 110), (0.6, 100)}
+
+    def test_rare_survivor_cells_excluded(self) -> None:
+        # S=1/16 cells: survivors not re-findable on re-simulation (Session 19).
+        cells = [cell(0.5, 120, 0.0625), cell(0.5, 100, 0.25)]
+        records = [record(0.5, 120, 0, None), record(0.5, 100, 1, None)]
+        picked = select_recoveries(cells, records, n=3)
+        assert [(p.mu, p.push_pct_bw) for p in picked] == [(0.5, 100)]

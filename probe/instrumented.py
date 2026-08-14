@@ -129,9 +129,49 @@ def instrumented_batch(
 
     rollout_jit = jax.jit(rollout)
 
+    def quick_outcome(model: Any, seed: int, force_n: float) -> Any:
+        q = np.asarray(
+            rollout_jit(
+                model,
+                jax.random.PRNGKey(seed),
+                jnp.asarray(force_n),
+                jnp.deg2rad(jnp.asarray(90.0)),
+                jnp.asarray(2.0),
+            )
+        )
+        qw, qx, qy, qz = q[:, 3], q[:, 4], q[:, 5], q[:, 6]
+        roll = np.arctan2(2.0 * (qw * qx + qy * qz), 1.0 - 2.0 * (qx * qx + qy * qy))
+        pitch = np.arcsin(np.clip(2.0 * (qw * qy - qz * qx), -1.0, 1.0))
+        return classify_rollout(q[:, 2], roll, pitch, dt).outcome
+
     results: list[dict[str, Any]] = []
     for spec in worlds:
         t_start = time.monotonic()
+        search_note: dict[str, Any] = {}
+        if "recovery_seed_candidates" in spec:
+            model_s = patch_floor_friction(base_model, floor_id, spec["mu"])
+            force_s = spec["push_pct_bw"] / 100.0 * mass_kg * g
+            chosen = None
+            attempts = 0
+            for cand in spec["recovery_seed_candidates"]:
+                attempts += 1
+                if quick_outcome(model_s, cand, force_s) is Outcome.CENSORED:
+                    chosen = cand
+                    break
+            if chosen is None:
+                results.append(
+                    {
+                        "cell": f"mu{spec['mu']}-push{spec['push_pct_bw']}",
+                        "recovery_search": "no survivor in re-simulation",
+                        "attempts": attempts,
+                    }
+                )
+                continue
+            spec = {"mu": spec["mu"], "push_pct_bw": spec["push_pct_bw"], "seed": chosen}
+            search_note = {
+                "recovery_attempts": attempts,
+                "matched_recorded_survivor": attempts == 1,
+            }
         world = WorldConfig.clamped(
             friction=spec.get("mu"),
             push_magnitude_pct_bw=spec.get("push_pct_bw", 0.0),
@@ -215,6 +255,7 @@ def instrumented_batch(
                 "ttf_s": outcome.ttf_s,
                 "sim_s": round(sim_s, 3),
                 "log_s": round(log_s, 3),
+                **search_note,
             }
         )
     return results
@@ -234,12 +275,34 @@ def main(
 
 @app.local_entrypoint()
 def batch(run_id: str, checkpoint: str = "converged") -> None:
+    from sweep.seed_scheme import sweep_prng_seed
+
     selection = _load_selection()
+    # Seeds are the sweep's ACTUAL PRNG seeds for these rollouts — a bare seed_idx
+    # simulates a different world (Session 19 defect).
     worlds = [
-        {"mu": c["mu"], "push_pct_bw": c["push_pct_bw"], "seed": 0}
+        {
+            "mu": c["mu"],
+            "push_pct_bw": c["push_pct_bw"],
+            "seed": sweep_prng_seed(c["mu"], c["push_pct_bw"], 0),
+        }
         for c in selection["boundary_cells"]
     ] + [
-        {"mu": r["mu"], "push_pct_bw": r["push_pct_bw"], "seed": r["seed_idx"]}
+        # Recovery cells: the sweep's recorded survivor may FLIP on re-simulation (GPU
+        # run-to-run nondeterminism — measured; knife-edge trajectories are maximally
+        # sensitive, DEVLOG Session 19). Send every sweep seed of the cell ordered
+        # recorded-survivor-first; the container searches for one that survives NOW and
+        # records the search.
+        {
+            "mu": r["mu"],
+            "push_pct_bw": r["push_pct_bw"],
+            "recovery_seed_candidates": [sweep_prng_seed(r["mu"], r["push_pct_bw"], r["seed_idx"])]
+            + [
+                sweep_prng_seed(r["mu"], r["push_pct_bw"], s)
+                for s in range(16)
+                if s != r["seed_idx"]
+            ],
+        }
         for r in selection["recoveries"]
     ]
     print(json.dumps(instrumented_batch.remote(run_id, worlds, checkpoint), indent=2))
