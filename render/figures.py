@@ -76,7 +76,7 @@ def render(variant: str) -> list[Path]:
     if variant == "repo":
         title = "Go1 survival surface — Kaplan-Meier S(5 s)"
         subtitle = (
-            "frozen §5 thresholds (torso z < 0.15 m ∨ tilt > 60°) · "
+            "frozen §5 thresholds (torso z < 0.15 m or tilt > 60°) · "
             f"sweep {manifest['source_sweep']}\n"
             "outlined = selected replay cells · ◆ = recovery replays"
         )
