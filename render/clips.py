@@ -393,6 +393,12 @@ def all_clips(run_id: str, checkpoint: str = "converged") -> None:
             continue
         parts = dict(kv.split("=") for kv in entry["cache_key"].split("|")[1:])
         chosen[(float(parts["mu"]), float(parts["push"]))] = int(parts["seed"])
-    for r in selection["recoveries"]:
-        r["prng_seed_override"] = chosen[(r["mu"], r["push_pct_bw"])]
+    # Recoveries that did not re-materialize in the replay batch (no survivor among the
+    # cell's 16 exact seeds on that run — Session 21) have no canonical trajectory and
+    # get no clip; the batch results record which.
+    selection["recoveries"] = [
+        dict(r, prng_seed_override=chosen[(r["mu"], r["push_pct_bw"])])
+        for r in selection["recoveries"]
+        if (r["mu"], r["push_pct_bw"]) in chosen
+    ]
     print(json.dumps(render_clips.remote(run_id, selection, checkpoint), indent=2))
