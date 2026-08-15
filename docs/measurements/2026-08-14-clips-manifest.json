@@ -3,113 +3,113 @@
     {
       "cell": "mu0.15-push60-seed0",
       "ttf_s": null,
-      "fail_bytes": 1011267,
-      "mobile_bytes": 673109
+      "fail_bytes": 2752752,
+      "mobile_bytes": 696189
     },
     {
       "cell": "mu0.35-push80-seed0",
-      "ttf_s": 2.74,
-      "fail_bytes": 1125678,
-      "mobile_bytes": 774128
+      "ttf_s": null,
+      "fail_bytes": 3038232,
+      "mobile_bytes": 726111
     },
     {
       "cell": "mu0.40-push80-seed0",
       "ttf_s": null,
-      "fail_bytes": 1036914,
-      "mobile_bytes": 682955
+      "fail_bytes": 2924895,
+      "mobile_bytes": 701842
     },
     {
       "cell": "mu0.50-push80-seed0",
-      "ttf_s": 3.0,
-      "fail_bytes": 1241656,
-      "mobile_bytes": 842793
+      "ttf_s": null,
+      "fail_bytes": 2881453,
+      "mobile_bytes": 723841
     },
     {
       "cell": "mu0.55-push90-seed0",
-      "ttf_s": null,
-      "fail_bytes": 1149908,
-      "mobile_bytes": 759400
+      "ttf_s": 2.68,
+      "fail_bytes": 2710831,
+      "mobile_bytes": 704440
     },
     {
       "cell": "mu0.10-push10-seed0",
-      "ttf_s": null,
-      "fail_bytes": 1170978,
-      "mobile_bytes": 767495
+      "ttf_s": 1.36,
+      "fail_bytes": 437938,
+      "mobile_bytes": 134158
     },
     {
       "cell": "mu0.20-push60-seed0",
-      "ttf_s": 2.74,
-      "fail_bytes": 1026381,
-      "mobile_bytes": 648875
+      "ttf_s": 3.34,
+      "fail_bytes": 2969176,
+      "mobile_bytes": 775862
     },
     {
       "cell": "mu0.25-push70-seed0",
-      "ttf_s": 2.66,
-      "fail_bytes": 883031,
-      "mobile_bytes": 646835
+      "ttf_s": null,
+      "fail_bytes": 2875492,
+      "mobile_bytes": 690941
     },
     {
       "cell": "mu0.30-push70-seed0",
       "ttf_s": null,
-      "fail_bytes": 1085004,
-      "mobile_bytes": 716662
+      "fail_bytes": 2990573,
+      "mobile_bytes": 726417
     },
     {
       "cell": "mu0.60-push100-seed0",
-      "ttf_s": 2.94,
-      "fail_bytes": 1130185,
-      "mobile_bytes": 762696
+      "ttf_s": 2.68,
+      "fail_bytes": 2358783,
+      "mobile_bytes": 609852
     },
     {
       "cell": "mu0.65-push80-seed0",
-      "ttf_s": 2.7800000000000002,
-      "fail_bytes": 1076971,
-      "mobile_bytes": 683088
+      "ttf_s": 2.7,
+      "fail_bytes": 2474651,
+      "mobile_bytes": 643649
     },
     {
       "cell": "mu0.70-push90-seed0",
-      "ttf_s": null,
-      "fail_bytes": 1121484,
-      "mobile_bytes": 731324
+      "ttf_s": 2.7,
+      "fail_bytes": 2554615,
+      "mobile_bytes": 600743
     },
     {
       "cell": "mu0.75-push100-seed0",
-      "ttf_s": 2.7,
-      "fail_bytes": 1138891,
-      "mobile_bytes": 763125
+      "ttf_s": 2.9,
+      "fail_bytes": 2921695,
+      "mobile_bytes": 775058
     },
     {
       "cell": "mu0.85-push100-seed0",
       "ttf_s": null,
-      "fail_bytes": 1090878,
-      "mobile_bytes": 709633
+      "fail_bytes": 2928489,
+      "mobile_bytes": 703439
     },
     {
       "cell": "mu0.90-push100-seed0",
       "ttf_s": null,
-      "fail_bytes": 1111526,
-      "mobile_bytes": 729988
+      "fail_bytes": 3092674,
+      "mobile_bytes": 740972
     },
     {
       "cell": "mu0.80-push110-seed1",
-      "ttf_s": null,
-      "fail_bytes": 1179673,
-      "mobile_bytes": 785589
+      "ttf_s": 2.98,
+      "fail_bytes": 3122039,
+      "mobile_bytes": 820524
     },
     {
       "cell": "mu0.90-push110-seed7",
-      "ttf_s": 2.8000000000000003,
-      "fail_bytes": 1131638,
-      "mobile_bytes": 758926
+      "ttf_s": 2.72,
+      "fail_bytes": 2641168,
+      "mobile_bytes": 681719
     },
     {
       "cell": "mu0.95-push110-seed10",
-      "ttf_s": null,
-      "fail_bytes": 1116920,
-      "mobile_bytes": 738168
+      "ttf_s": 2.82,
+      "fail_bytes": 2692174,
+      "mobile_bytes": 643274
     }
   ],
-  "ghost_bytes": 2090544,
-  "composite_bytes": 11212166,
-  "wall_s": 4002.0
+  "ghost_bytes": 1365566,
+  "composite_bytes": 11192278,
+  "wall_s": 5159.6
 }
