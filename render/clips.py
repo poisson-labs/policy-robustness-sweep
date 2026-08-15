@@ -232,6 +232,13 @@ def render_clips(
         t_end = (ttf_s + 0.5) if ttf_s is not None else (push_start + PUSH_DURATION_S + 1.5)
         i0 = max(0, int((push_start - 0.5) / dt))
         i1 = min(steps, int(t_end / dt))
+        # Feet-only collision model: after the topple the body sinks through the floor
+        # (cosmetic, DEVLOG Session 20). Freeze on the frame the torso reaches the fail
+        # height and hold it for the remaining window instead of showing the sink.
+        sink_i = None
+        if ttf_s is not None:
+            below = np.nonzero(qpos_traj[:, 2] < 0.15)[0]
+            sink_i = int(below[0]) if len(below) else None
         qw, qx, qy, qz = (qpos_traj[:, i] for i in (3, 4, 5, 6))
         yaws = np.arctan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz))
         onset_i = max(0, int(push_start / dt))
@@ -239,6 +246,7 @@ def render_clips(
         frames: list[np.ndarray] = []
         for i in range(i0, i1):
             t = (i + 1) * dt
+            src_i = i if (sink_i is None or i <= sink_i) else sink_i  # freeze on sink
             in_window = push_start <= (i * dt) < push_start + PUSH_DURATION_S
             arrow = (
                 (float(np.cos(angle)) * arrow_len, float(np.sin(angle)) * arrow_len)
@@ -247,10 +255,10 @@ def render_clips(
             )
             if multi_angle:
                 frame = np.concatenate(
-                    [frame_at(qpos_traj[i], r, cam, arrow) for cam in angle_cams], axis=1
+                    [frame_at(qpos_traj[src_i], r, cam, arrow) for cam in angle_cams], axis=1
                 )
             else:
-                frame = frame_at(qpos_traj[i], r, None, arrow)
+                frame = frame_at(qpos_traj[src_i], r, None, arrow)
             repeats = (
                 SLOWMO_FACTOR if ttf_s is not None and abs(t - ttf_s) <= SLOWMO_HALF_WINDOW_S else 1
             )
@@ -286,11 +294,27 @@ def render_clips(
         }
         for r in selection["recoveries"]
     ]
+    from configs.world import WorldConfig
+
+    rrd_dir = Path(VOLUME_MOUNT) / "rrd"
     for cell in cells:
-        model = patch_floor_friction(base_model, floor_id, cell["mu"])
-        force_n = cell["push_pct_bw"] / 100.0 * mass_kg * g
-        qpos = batched_rollout(model, [cell["seed"]], force_n)[0]
-        ttf = ttf_of(qpos)
+        # Render the CANONICAL replay trajectory (saved by the replay batch alongside its
+        # .rrd) — never an independent re-simulation (Session 21: same-seed clip/replay
+        # outcomes disagreed on 10/18 worlds under measured GPU nondeterminism).
+        world = WorldConfig.clamped(
+            friction=cell["mu"], push_magnitude_pct_bw=cell["push_pct_bw"], seed=cell["seed"]
+        )
+        safe_key = world.cache_key().replace("|", "_").replace("=", "-")
+        traj_path = rrd_dir / f"{safe_key}.qpos.npz"
+        if not traj_path.exists():
+            raise FileNotFoundError(
+                f"canonical trajectory missing for {world.cache_key()} — run the replay "
+                "batch (probe/instrumented.py::batch) first"
+            )
+        with np.load(traj_path) as d:
+            qpos = d["qpos"]
+            ttf_saved = float(d["ttf_s"])
+        ttf = None if ttf_saved < 0 else ttf_saved
         stem = f"mu{cell['mu']:.2f}-push{int(cell['push_pct_bw'])}-seed{cell['seed_idx']}"
         arrow_len = 0.9 * (cell["push_pct_bw"] / 100.0) ** 0.5  # matches replay arrows
         frames = failure_window_frames(qpos, ttf, renderer, arrow_len, multi_angle=True)
@@ -311,6 +335,13 @@ def render_clips(
     qpos_all = batched_rollout(model, ghost_seeds, force_n)
     onset_i = max(0, int(2.0 / dt))
     qpos_all = np.stack([align_to_onset_frame(qpos_all[s], onset_i) for s in range(16)])
+    # Freeze each ghost at its own sink frame (feet-only collision → bodies would sink;
+    # a fallen ghost holds its final topple pose instead). Ghost is self-consistent —
+    # 16 seeds simulated together in one batch, no cross-pipeline outcome claim.
+    for s in range(16):
+        below = np.nonzero(qpos_all[s][:, 2] < 0.15)[0]
+        if len(below):
+            qpos_all[s][below[0] :] = qpos_all[s][below[0]]
     ghost_frames: list[np.ndarray] = []
     # static empty scene (fixed camera): robot dropped far below ground, rendered once
     hq = qpos_all[0][0].copy()

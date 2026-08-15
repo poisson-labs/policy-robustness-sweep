@@ -244,6 +244,15 @@ def instrumented_batch(
         safe_key = world.cache_key().replace("|", "_").replace("=", "-")
         rrd_path = rrd_dir / f"{safe_key}.rrd"
         rr.save(str(rrd_path), default_blueprint=replay_blueprint(trunk_entity))
+        # Canonical trajectory for downstream renderers (Session 21): clips must render
+        # THIS rollout, not an independent re-simulation (same-seed outcomes disagree
+        # under measured GPU nondeterminism at knife-edge worlds).
+        np.savez_compressed(
+            rrd_dir / f"{safe_key}.qpos.npz",
+            qpos=qpos_arr,
+            ttf_s=np.float64(-1.0 if outcome.ttf_s is None else outcome.ttf_s),
+            outcome=np.array(outcome.outcome.value),
+        )
         log_s = time.monotonic() - t0
         checkpoints.commit()
         results.append(
