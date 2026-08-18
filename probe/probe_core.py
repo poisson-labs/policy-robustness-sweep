@@ -76,12 +76,20 @@ class ProbeRuntime:
             preprocess_observations_fn=normalize,
             **network_config,
         )
-        policy = ppo_networks.make_inference_fn(ppo_network)(self.params, deterministic=True)
+        make_policy = ppo_networks.make_inference_fn(ppo_network)
         env = self.env
         torso_id = self.torso_id
         steps = self.steps
 
-        def rollout(model: Any, key: Any, force_n: Any, direction_rad: Any, start_s: Any) -> Any:
+        # Params are a TRACED ARGUMENT, not a closure constant (M2-01b lever 3): with
+        # the params closed over, JAX embedded ~1.7 MB of weights as HLO constants and
+        # the persistent-cache key came out different in every process (three keys
+        # observed for identical code) → cache miss on every cold start. Traced
+        # arguments contribute only their abstract shape/dtype to the key.
+        def rollout(
+            params: Any, model: Any, key: Any, force_n: Any, direction_rad: Any, start_s: Any
+        ) -> Any:
+            policy = make_policy(params, deterministic=True)
             env._mjx_model = model
             state = init_push_info(env.reset(key))
             state.info["command"] = jnp.array([1.0, 0.0, 0.0])
@@ -97,6 +105,7 @@ class ProbeRuntime:
             return qpos
 
         self._rollout = jax.jit(rollout)
+        self._rollout_src = rollout  # for HLO text dumps (cache-key audit)
         self.init_s = time.monotonic() - t0
         trunk_geom_id = int(np.argmax(self.mj_model.geom_bodyid == self.torso_id))
         name = self.mj_model.geom(trunk_geom_id).name or f"geom{trunk_geom_id}"
@@ -115,6 +124,7 @@ class ProbeRuntime:
         t0 = time.monotonic()
         qpos = np.asarray(
             self._rollout(
+                self.params,
                 model,
                 jax.random.PRNGKey(world.seed),
                 jnp.asarray(force_n),
@@ -123,6 +133,30 @@ class ProbeRuntime:
             )
         )
         return qpos, time.monotonic() - t0
+
+    def hlo_text(self, world: Any) -> str:
+        """Lowered HLO text for the given world's call (audit only)."""
+        import jax
+        import jax.numpy as jnp
+
+        from sweep.injected_env import patch_floor_friction
+
+        model = self.base_model
+        if world.friction is not None:
+            model = patch_floor_friction(self.base_model, self.floor_id, world.friction)
+        force_n = world.push_magnitude_pct_bw / 100.0 * self.mass_kg * self.g
+        return (
+            jax.jit(self._rollout_src)
+            .lower(
+                self.params,
+                model,
+                jax.random.PRNGKey(world.seed),
+                jnp.asarray(force_n),
+                jnp.deg2rad(jnp.asarray(world.push_direction_deg)),
+                jnp.asarray(world.push_start_s),
+            )
+            .as_text()
+        )
 
     def warm_up(self) -> None:
         """Compile the program (fills the persistent cache when enabled)."""

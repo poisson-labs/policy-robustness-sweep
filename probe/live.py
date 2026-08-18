@@ -107,16 +107,108 @@ app = modal.App("opw-probe-live")
 @modal.concurrent(max_inputs=1)
 def probe(world_json: str) -> dict[str, Any]:
     """One probe. `world_json` is a serialized WorldConfig (already clamped by app/)."""
+    import logging
+    import os
+
     from probe.probe_core import ProbeRuntime
+
+    # Cache-hit audit (M2-01b lever 3): does the serving process actually READ the
+    # baked compilation cache? JAX logs hits/misses at DEBUG on this logger.
+    audit: dict[str, Any] = {
+        "cache_dir_exists": os.path.isdir(CACHE_DIR),
+        "cache_files": sum(len(f) for _, _, f in os.walk(CACHE_DIR))
+        if os.path.isdir(CACHE_DIR)
+        else 0,
+    }
+    hits: list[str] = []
+    handler = logging.Handler()
+    handler.emit = lambda rec: hits.append(rec.getMessage()[:120])  # type: ignore[method-assign]
+    # Capture the whole jax._src tree at DEBUG: cache decisions are logged from
+    # compilation_cache AND compiler (min-size / min-time skips, "not cacheable").
+    cache_logger = logging.getLogger("jax._src")
+    cache_logger.setLevel(logging.DEBUG)
+    cache_logger.addHandler(handler)
 
     t0 = time.monotonic()
     rt = ProbeRuntime.get(run_id=RUN_ID, checkpoint=CHECKPOINT, volume_root=Path(VOLUME_MOUNT))
     t_ready = time.monotonic()
     result = rt.run(json.loads(world_json))
+    cache_logger.removeHandler(handler)
+    audit["baked_keys"] = sorted(os.listdir(CACHE_DIR))[:30] if os.path.isdir(CACHE_DIR) else []
+    audit["cache_log_lines"] = len(hits)
+    audit["cache_log_sample"] = hits[:6]
+    # Everything JAX says about jit_rollout, plus any persistent-cache read/write/skip
+    # lines (in log order), plus the key-component hashes for jit_rollout.
+    idx = [i for i, h in enumerate(hits) if "MLIR module conversion jit(rollout)" in h]
+    start = idx[0] if idx else 0
+    window = hits[start : start + 25]
+    audit["rollout_log_window"] = window
+    audit["rollout_key_components"] = {
+        h.split("hash of serialized ")[1].split(":")[0]: h.split(": ")[-1][:16]
+        for h in window
+        if "hash of serialized " in h
+    }
+    audit["cache_decisions"] = [
+        h
+        for h in hits
+        if any(
+            k in h
+            for k in (
+                "persistent",
+                "Writing",
+                "Reading",
+                "cache hit",
+                "cache miss",
+                "not cach",
+                "Not writing",
+            )
+        )
+    ][:12]
+    audit["hits"] = sum("hit" in h.lower() and "miss" not in h.lower() for h in hits)
+    audit["misses"] = sum("miss" in h.lower() for h in hits)
+    result["cache_audit"] = audit
     result["timings_s"]["container_ready_s"] = round(t_ready - t0, 3)
     result["timings_s"]["total_s"] = round(time.monotonic() - t0, 3)
     checkpoints.commit()
     return result
+
+
+@app.function(image=probe_image, gpu=PROBE_GPU, timeout=600, volumes={VOLUME_MOUNT: checkpoints})
+def dump_hlo(tag: str) -> str:
+    """Audit helper: write this process's lowered HLO for the canonical world to the
+    Volume so two processes' programs can be diffed (M2-01b cache-key hunt)."""
+    from configs.world import WorldConfig
+    from probe.probe_core import ProbeRuntime
+
+    rt = ProbeRuntime.get(run_id=RUN_ID, checkpoint=CHECKPOINT, volume_root=Path(VOLUME_MOUNT))
+    text = rt.hlo_text(WorldConfig.clamped(friction=0.5, push_magnitude_pct_bw=90.0))
+    out = Path(VOLUME_MOUNT) / "audit" / f"hlo-{tag}.txt"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(text)
+    checkpoints.commit()
+    return f"{len(text)} chars"
+
+
+@app.function(image=probe_image, gpu=PROBE_GPU, timeout=600)
+def model_leaf_audit() -> list[str]:
+    """Audit: which mjx.Model leaves are int32 arrays of the suspicious shapes seen as
+    per-process constants in the HLO diff (18/40/14/12-wide int32 pointer pairs)?"""
+    import jax
+    import numpy as np
+
+    from probe.probe_core import ProbeRuntime
+
+    rt = ProbeRuntime.get(run_id=RUN_ID, checkpoint=CHECKPOINT, volume_root=None)
+    out: list[str] = []
+    for path, leaf in jax.tree_util.tree_leaves_with_path(rt.base_model):
+        name = jax.tree_util.keystr(path)
+        arr = np.asarray(leaf)
+        if arr.dtype.kind in "iu" and arr.size in (12, 14, 18, 40, 1):
+            vals = arr.ravel()[:6].tolist()
+            big = any(abs(int(v)) > 1_000_000 for v in arr.ravel().tolist())
+            if big:
+                out.append(f"{name} {arr.dtype} {arr.shape} sample={vals}")
+    return out
 
 
 @app.local_entrypoint()
