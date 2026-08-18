@@ -22,3 +22,6 @@ web/dist/
 web/vendor/rerun/*
 !web/vendor/rerun/VERSION
 !web/vendor/rerun/SHA256SUMS
+
+# Policy params baked into the probe image (fetched from the Volume; not in git)
+probe/params/
