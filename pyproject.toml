@@ -46,6 +46,9 @@ select = [
 # Strict on the dirs that hold (or will hold) the config schema, stats code, and CI checks
 # (kickoff §4: strict-ish on configs/, reduce/, and stats code at minimum).
 include = ["configs", "reduce", "ci", "tests", "app"]
+# The Modal/FastAPI shell is untyped by nature (Modal decorators, decorator-registered
+# route handlers); the logic it wraps (app/core.py) is fully strict + contract-tested.
+exclude = ["app/server.py"]
 pythonVersion = "3.12"
 typeCheckingMode = "strict"
 
