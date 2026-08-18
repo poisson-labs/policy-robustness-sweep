@@ -38,6 +38,19 @@ CACHE_DIR = "/jax-cache"
 PROBE_GPU = "A100-80GB"
 
 
+def _expose_ptxas() -> None:
+    """Image-build step: put the pip-wheel ptxas (nvidia-cuda-nvcc-cu12, already
+    installed by jax[cuda12]) on PATH so XLA's kernel-cache subprocess mode can spawn
+    it (Session 24: ENABLE_XLA_CACHES=all failed with RET_CHECK process.Start())."""
+    import glob
+    import os
+
+    hits = glob.glob("/usr/local/lib/python3.12/site-packages/nvidia/cuda_nvcc/bin/ptxas")
+    assert hits, "ptxas not found in the nvidia-cuda-nvcc wheel"
+    os.symlink(hits[0], "/usr/local/bin/ptxas")
+    print("ptxas exposed:", hits[0])
+
+
 def _warm_compile_cache() -> None:
     """Image-build step: run one probe end-to-end so every jit/scan is compiled into the
     persistent cache baked into this layer."""
@@ -61,42 +74,116 @@ probe_image = (
         {
             "JAX_COMPILATION_CACHE_DIR": CACHE_DIR,
             "JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS": "0",
-            # NOT "ENABLE_XLA_CACHES=all": its kernel-cache mode compiles via a ptxas
-            # subprocess that fails to start in this image (first build: RET_CHECK
-            # subprocess_compilation.cc). The JAX-level executable cache is what skips
-            # the ~100 s compile; the XLA autotune cache stays at its default.
+            # "all" also persists XLA's GPU kernel + autotune caches — the residual
+            # 18 s of cold "sim" measured in Session 24. Needs ptxas on PATH (below).
+            # XLA kernel-cache persistence ("ENABLE_XLA_CACHES=all") is OFF: its
+            # subprocess ptxas/linker path fails in this image even with ptxas on PATH
+            # and XLA's own suggested flag (builds 1,3,4 — Session 24/25). Time-boxed.
+            # Lever 2 (autotune_level=0) MEASURED and REVERTED: cold sim stayed
+            # 18-21 s on genuinely cold containers, warm sim unchanged — the residual
+            # cold cost is not autotuning (DEVLOG Session 25). Next lever: memory
+            # snapshot (container-ready + runtime-init) and a compile-cache hit audit.
         }
     )
     # Policy params baked into the image so warm-up (no Volume at build) and serving
     # (no Volume read on the hot path) both load from disk instantly.
     .add_local_dir("probe/params", remote_path="/params", copy=True)
     .add_local_python_source("train", "sweep", "configs", "probe", "reduce", copy=True)
+    # run_function steps import this module in-container → local source must already
+    # be present (first attempt ordered these the other way: ModuleNotFoundError).
     .run_function(_warm_compile_cache, gpu=PROBE_GPU)
 )
 
 app = modal.App("opw-probe-live")
 
 
-@app.function(
+@app.cls(
     image=probe_image,
     gpu=PROBE_GPU,
     timeout=120,
     volumes={VOLUME_MOUNT: checkpoints},
     scaledown_window=60,
+    # Lever 4 (M2-01b): GPU memory snapshot. The persistent compile cache is
+    # STRUCTURALLY defeated for jit(rollout) on this mjx build — its FFI custom calls
+    # bake host/device pointers into the HLO as constants, so the cache key differs in
+    # every process (Sessions 25/26; audit code lived here, now in git history). A
+    # snapshot taken AFTER the JIT restores a process that already holds the compiled
+    # executable, skipping compile entirely.
+    enable_memory_snapshot=True,
+    experimental_options={"enable_gpu_snapshot": True},
 )
 @modal.concurrent(max_inputs=1)
-def probe(world_json: str) -> dict[str, Any]:
-    """One probe. `world_json` is a serialized WorldConfig (already clamped by app/)."""
+class Probe:
+    @modal.enter(snap=True)
+    def compile(self) -> None:
+        from probe.probe_core import ProbeRuntime
+
+        t0 = time.monotonic()
+        self.rt = ProbeRuntime.get(run_id=RUN_ID, checkpoint=CHECKPOINT, volume_root=None)
+        self.rt.warm_up()  # JIT + first run happen BEFORE the snapshot
+        self.snap_prep_s = round(time.monotonic() - t0, 3)
+
+    @modal.method()
+    def probe(self, world_json: str) -> dict[str, Any]:
+        """One probe. `world_json` is a serialized WorldConfig (already clamped by app/)."""
+        t0 = time.monotonic()
+        result = self.rt.run(json.loads(world_json))
+        result["timings_s"]["container_ready_s"] = 0.0
+        result["timings_s"]["snapshot_prep_s"] = self.snap_prep_s
+        result["timings_s"]["total_s"] = round(time.monotonic() - t0, 3)
+        checkpoints.commit()
+        return result
+
+
+@app.function(image=probe_image, gpu=PROBE_GPU, timeout=600, volumes={VOLUME_MOUNT: checkpoints})
+def dump_hlo(tag: str) -> str:
+    """Audit helper: write this process's lowered HLO for the canonical world to the
+    Volume so two processes' programs can be diffed (M2-01b cache-key hunt)."""
+    from configs.world import WorldConfig
     from probe.probe_core import ProbeRuntime
 
-    t0 = time.monotonic()
     rt = ProbeRuntime.get(run_id=RUN_ID, checkpoint=CHECKPOINT, volume_root=Path(VOLUME_MOUNT))
-    t_ready = time.monotonic()
-    result = rt.run(json.loads(world_json))
-    result["timings_s"]["container_ready_s"] = round(t_ready - t0, 3)
-    result["timings_s"]["total_s"] = round(time.monotonic() - t0, 3)
+    text = rt.hlo_text(WorldConfig.clamped(friction=0.5, push_magnitude_pct_bw=90.0))
+    out = Path(VOLUME_MOUNT) / "audit" / f"hlo-{tag}.txt"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(text)
     checkpoints.commit()
-    return result
+    return f"{len(text)} chars"
+
+
+@app.function(image=probe_image, gpu=PROBE_GPU, timeout=600)
+def model_leaf_audit() -> list[str]:
+    """Audit: which mjx.Model leaves are int32 arrays of the suspicious shapes seen as
+    per-process constants in the HLO diff (18/40/14/12-wide int32 pointer pairs)?"""
+    import jax
+    import numpy as np
+
+    from probe.probe_core import ProbeRuntime
+
+    rt = ProbeRuntime.get(run_id=RUN_ID, checkpoint=CHECKPOINT, volume_root=None)
+    out: list[str] = []
+    leaves = jax.tree_util.tree_leaves_with_path(rt.base_model)
+    out.append(f"model leaves: {len(leaves)}")
+    kinds: dict[str, int] = {}
+    for path, leaf in leaves:
+        name = jax.tree_util.keystr(path)
+        if not hasattr(leaf, "shape"):
+            out.append(f"NON-ARRAY LEAF {name}: {type(leaf).__name__} {str(leaf)[:60]}")
+            continue
+        arr = np.asarray(leaf)
+        kinds[str(arr.dtype)] = kinds.get(str(arr.dtype), 0) + 1
+        if (
+            arr.dtype.kind in "iu"
+            and arr.size
+            and abs(arr.ravel().astype(np.int64)).max() > 1 << 20
+        ):
+            out.append(f"BIG-INT LEAF {name} {arr.dtype} {arr.shape} max={int(abs(arr).max())}")
+    out.append(f"dtype census: {kinds}")
+    # env-level state that the closure captures: anything with pointer-like ints?
+    for attr in ("_mjx_model", "mjx_model", "_mj_model", "mj_model"):
+        obj = getattr(rt.env, attr, None)
+        out.append(f"env.{attr}: {type(obj).__name__}")
+    return out
 
 
 @app.local_entrypoint()
@@ -108,7 +195,7 @@ def measure(cold_starts: int = 5, warm_calls: int = 20) -> None:
     def call(seed: int) -> dict[str, Any]:
         w = WorldConfig.clamped(friction=0.5, push_magnitude_pct_bw=90.0, seed=seed)
         t0 = time.monotonic()
-        r = probe.remote(w.model_dump_json())
+        r = Probe().probe.remote(w.model_dump_json())
         r["client_wall_s"] = round(time.monotonic() - t0, 3)
         return r
 

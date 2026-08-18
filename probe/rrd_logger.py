@@ -145,3 +145,57 @@ def replay_blueprint(tracking_entity: str) -> Any:
         ),
         collapse_panels=True,
     )
+
+
+def log_trajectory_columns(
+    mj_model: Any,
+    geom_xpos: np.ndarray,
+    geom_xmat: np.ndarray,
+    times_s: np.ndarray,
+    torso_z: np.ndarray,
+    upz: np.ndarray,
+) -> None:
+    """Columnar (send_columns) version of the per-step loop — one call per entity for
+    the whole rollout instead of one call per geom per step (M2-01b: the per-call
+    Python overhead was ~4.3 s of every warm probe).
+
+    geom_xpos: (T, ngeom, 3); geom_xmat: (T, ngeom, 9); times_s: (T,)
+    """
+    time_col = rr.TimeColumn(TIMELINE, duration=times_s)
+    for gid in range(mj_model.ngeom):
+        rr.send_columns(
+            _geom_entity(mj_model, gid),
+            indexes=[time_col],
+            columns=rr.Transform3D.columns(
+                translation=geom_xpos[:, gid, :],
+                mat3x3=geom_xmat[:, gid, :].reshape(-1, 3, 3),
+            ),
+        )
+    rr.send_columns(
+        "tracks/torso_z", indexes=[time_col], columns=rr.Scalars.columns(scalars=torso_z)
+    )
+    rr.send_columns("tracks/up_z", indexes=[time_col], columns=rr.Scalars.columns(scalars=upz))
+
+
+def log_push_arrow_columns(
+    times_s: np.ndarray, active: np.ndarray, origins: np.ndarray, vx: float, vy: float
+) -> None:
+    """Columnar push arrow: present (with the torso-anchored origin) only on active
+    steps; Clear at the first inactive step after the window."""
+    idx = np.nonzero(active)[0]
+    if len(idx) == 0:
+        return
+    rr.send_columns(
+        "world/push_force",
+        indexes=[rr.TimeColumn(TIMELINE, duration=times_s[idx])],
+        columns=rr.Arrows3D.columns(
+            origins=origins[idx],
+            vectors=np.tile([vx, vy, 0.0], (len(idx), 1)),
+            colors=np.tile([220, 38, 38, 255], (len(idx), 1)),
+            radii=np.full(len(idx), 0.035),
+        ),
+    )
+    end = int(idx[-1]) + 1
+    if end < len(times_s):
+        rr.set_time(TIMELINE, duration=float(times_s[end]))
+        rr.log("world/push_force", rr.Clear(recursive=False))
