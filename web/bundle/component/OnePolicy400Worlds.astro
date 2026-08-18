@@ -1,0 +1,64 @@
+---
+// OnePolicy400Worlds.astro — mount component for the live artifact (M2-03 shell;
+// M3 fills in heatmap/sliders/schematic). Vanilla Astro, no framework, no CDN:
+// viewer wasm from /one-policy-400-worlds/vendor/rerun/, API via same-origin /api/*.
+//
+// Usage in an MDX post:
+//   import OnePolicy400Worlds from '../../components/OnePolicy400Worlds.astro';
+//   <OnePolicy400Worlds rrd="/api/rrd/v1_mu-0.3500_push-80.00_dir-90.00_t0-2.00_seed-1002181.rrd" />
+interface Props {
+  rrd?: string;      // initial replay to load (an /api/rrd/... URL)
+  height?: string;   // CSS height of the viewer box
+}
+const { rrd = '', height = '520px' } = Astro.props;
+---
+
+<div class="opw" data-rrd={rrd} data-height={height}>
+  <div class="opw-status" data-role="status">loading viewer…</div>
+  <div class="opw-viewer" data-role="viewer" style={`height:${height}`}></div>
+</div>
+
+<style>
+  .opw { width: 100%; margin: 2rem 0; }
+  .opw-status {
+    font-size: 0.85rem; color: #666; margin-bottom: 0.4rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .opw-status b { color: #1d4ed8; }
+  .opw-viewer {
+    width: 100%; background: #0d0d10; border-radius: 8px; overflow: hidden;
+    border: 1px solid #e0e0e0;
+  }
+</style>
+
+<script>
+  // Runs once per page; supports multiple mounts.
+  const mounts = document.querySelectorAll<HTMLElement>('.opw');
+  for (const el of mounts) {
+    const status = el.querySelector<HTMLElement>('[data-role=status]')!;
+    const box = el.querySelector<HTMLElement>('[data-role=viewer]')!;
+    const rrd = el.dataset.rrd || '';
+    const t0 = performance.now();
+    (async () => {
+      try {
+        // Same-origin, hash-verified vendored viewer (never a CDN).
+        const mod = await import(/* @vite-ignore */ '/one-policy-400-worlds/vendor/rerun/index.js');
+        const viewer = new mod.WebViewer();
+        const url = rrd ? new URL(rrd, location.origin).href : null;
+        await viewer.start(url, box, {
+          hide_welcome_screen: true, // welcome screen fetches app.rerun.io — external; never
+          width: '100%',
+          height: el.dataset.height || '520px',
+        });
+        const ms = Math.round(performance.now() - t0);
+        const mem = (performance as any).memory
+          ? ` · JS heap ${((performance as any).memory.usedJSHeapSize / 1048576).toFixed(0)} MB`
+          : '';
+        status.innerHTML = `viewer ready in <b>${ms} ms</b>${mem}`;
+        (el as any).__opwViewer = viewer; // M3 controls (jump-to-failure) hook here
+      } catch (err) {
+        status.textContent = `viewer failed: ${err}`;
+      }
+    })();
+  }
+</script>

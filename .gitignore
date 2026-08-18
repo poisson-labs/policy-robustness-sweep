@@ -25,3 +25,6 @@ web/vendor/rerun/*
 
 # Policy params baked into the probe image (fetched from the Volume; not in git)
 probe/params/
+
+# Fetched viewer assets in the bundle (reproduced by scripts/fetch_viewer.sh)
+web/bundle/public/one-policy-400-worlds/vendor/
