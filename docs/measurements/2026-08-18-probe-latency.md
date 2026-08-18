@@ -91,3 +91,50 @@ Where cold time actually goes (from the three clean cold rows): container ready
 Modal overhead ~5–8 s. Next levers: (a) audit whether the persistent cache is being HIT
 at all in the serving process (log JAX cache hits/misses on cold), (b) memory snapshot
 for container-ready + init.
+
+## Lever 3 — cache-hit audit: root cause (measured 2026-08-18)
+
+Instrumented the serving process (JAX cache logger, baked-key listing, key-component
+hashes, HLO dumps from two processes):
+- small programs → persistent-cache HITS; **`jit(rollout)` → MISS on every cold start**,
+  writing a different key per process (≥4 keys observed for identical code).
+- key components across two cold processes: XLA flags / backend / compile_options /
+  accelerator_config / jax_lib all SAME; **`computation` DIFFERS**.
+- HLO diff (4231 lines each): **12 differing lines — int32 constants (18/40/14/12-wide)
+  holding 64-bit host pointers split into halves**, operands of the two
+  `stablehlo.custom_call @jax_callable_variadic_tuple…` sites = mujoco-mjx 3.11.0's FFI
+  bridge. Engine property, not our code: on this build the persistent compile cache
+  structurally cannot hit the rollout program across processes.
+- Traced-params change (params as jit arg, not closure) kept and correct (baked
+  jit_rollout keys 2 → 1); the FFI pointers remained.
+
+## Lever 4 — GPU memory snapshot (measured 2026-08-18) — THE FIX
+
+`@app.cls(enable_memory_snapshot=True, experimental_options={"enable_gpu_snapshot":
+True})`, JIT + warm-up in `@modal.enter(snap=True)`. Snapshot creation (one-time, at
+deploy's first call): 165.8 s wall (snapshot_prep 18–27 s inside).
+
+| | n | p50 | p95 | max | budget |
+|---|---|---|---|---|---|
+| cold (restored) | 3 genuine | 24.1 s | 35.1 s | 35.1 s | < 20 s |
+| warm | 20 | 2.8 s | 5.2 s | 36.0 s* | < 10 s |
+
+**On restored cold containers: sim 0.51–0.52 s, function total 0.7–1.6 s — the compile
+is GONE.** All remaining cold wall (23–35 s) is snapshot restore + Modal scheduling,
+outside our code. (*one warm outlier at 36 s: a call that landed on a fresh restore.)
+Two study "cold" rows (1.8 s, 2.2 s walls) hit still-live containers — genuine restores
+are the three ≥ 23 s rows.
+
+## Standing after M2-01b
+
+- Warm: **p50 2.8 s** (from 7.2 s at M2-01) — passes.
+- Cold: **p50 ≈ 24 s** (from 39.5 s), p95 35 s — still misses < 20 s, but the residual is
+  100% platform (snapshot restore), 0% our code. Snapshot restore time is Modal's
+  number; the only lever left on our side would be image size (smaller image →
+  faster restore) — worth one measured try in M4, not now.
+- §14 #4: cold p95 35 s > 20 s → **min_containers=1 for launch week stands**,
+  receipt-disclosed. Steady state: scale-to-zero. Post framing is now sharper: "a cold
+  probe is ~24 s of *platform* restore + 1 s of physics; during launch week we keep one
+  warm."
+- spawn+poll trigger (p95 cold > 30 s): still nominally tripped at 35 s, but every
+  cold call remains ≪ 150 s → sync path holds with min-warm; spawn+poll not built.

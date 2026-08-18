@@ -97,80 +97,42 @@ probe_image = (
 app = modal.App("opw-probe-live")
 
 
-@app.function(
+@app.cls(
     image=probe_image,
     gpu=PROBE_GPU,
     timeout=120,
     volumes={VOLUME_MOUNT: checkpoints},
     scaledown_window=60,
+    # Lever 4 (M2-01b): GPU memory snapshot. The persistent compile cache is
+    # STRUCTURALLY defeated for jit(rollout) on this mjx build — its FFI custom calls
+    # bake host/device pointers into the HLO as constants, so the cache key differs in
+    # every process (Sessions 25/26; audit code lived here, now in git history). A
+    # snapshot taken AFTER the JIT restores a process that already holds the compiled
+    # executable, skipping compile entirely.
+    enable_memory_snapshot=True,
+    experimental_options={"enable_gpu_snapshot": True},
 )
 @modal.concurrent(max_inputs=1)
-def probe(world_json: str) -> dict[str, Any]:
-    """One probe. `world_json` is a serialized WorldConfig (already clamped by app/)."""
-    import logging
-    import os
+class Probe:
+    @modal.enter(snap=True)
+    def compile(self) -> None:
+        from probe.probe_core import ProbeRuntime
 
-    from probe.probe_core import ProbeRuntime
+        t0 = time.monotonic()
+        self.rt = ProbeRuntime.get(run_id=RUN_ID, checkpoint=CHECKPOINT, volume_root=None)
+        self.rt.warm_up()  # JIT + first run happen BEFORE the snapshot
+        self.snap_prep_s = round(time.monotonic() - t0, 3)
 
-    # Cache-hit audit (M2-01b lever 3): does the serving process actually READ the
-    # baked compilation cache? JAX logs hits/misses at DEBUG on this logger.
-    audit: dict[str, Any] = {
-        "cache_dir_exists": os.path.isdir(CACHE_DIR),
-        "cache_files": sum(len(f) for _, _, f in os.walk(CACHE_DIR))
-        if os.path.isdir(CACHE_DIR)
-        else 0,
-    }
-    hits: list[str] = []
-    handler = logging.Handler()
-    handler.emit = lambda rec: hits.append(rec.getMessage()[:120])  # type: ignore[method-assign]
-    # Capture the whole jax._src tree at DEBUG: cache decisions are logged from
-    # compilation_cache AND compiler (min-size / min-time skips, "not cacheable").
-    cache_logger = logging.getLogger("jax._src")
-    cache_logger.setLevel(logging.DEBUG)
-    cache_logger.addHandler(handler)
-
-    t0 = time.monotonic()
-    rt = ProbeRuntime.get(run_id=RUN_ID, checkpoint=CHECKPOINT, volume_root=Path(VOLUME_MOUNT))
-    t_ready = time.monotonic()
-    result = rt.run(json.loads(world_json))
-    cache_logger.removeHandler(handler)
-    audit["baked_keys"] = sorted(os.listdir(CACHE_DIR))[:30] if os.path.isdir(CACHE_DIR) else []
-    audit["cache_log_lines"] = len(hits)
-    audit["cache_log_sample"] = hits[:6]
-    # Everything JAX says about jit_rollout, plus any persistent-cache read/write/skip
-    # lines (in log order), plus the key-component hashes for jit_rollout.
-    idx = [i for i, h in enumerate(hits) if "MLIR module conversion jit(rollout)" in h]
-    start = idx[0] if idx else 0
-    window = hits[start : start + 25]
-    audit["rollout_log_window"] = window
-    audit["rollout_key_components"] = {
-        h.split("hash of serialized ")[1].split(":")[0]: h.split(": ")[-1][:16]
-        for h in window
-        if "hash of serialized " in h
-    }
-    audit["cache_decisions"] = [
-        h
-        for h in hits
-        if any(
-            k in h
-            for k in (
-                "persistent",
-                "Writing",
-                "Reading",
-                "cache hit",
-                "cache miss",
-                "not cach",
-                "Not writing",
-            )
-        )
-    ][:12]
-    audit["hits"] = sum("hit" in h.lower() and "miss" not in h.lower() for h in hits)
-    audit["misses"] = sum("miss" in h.lower() for h in hits)
-    result["cache_audit"] = audit
-    result["timings_s"]["container_ready_s"] = round(t_ready - t0, 3)
-    result["timings_s"]["total_s"] = round(time.monotonic() - t0, 3)
-    checkpoints.commit()
-    return result
+    @modal.method()
+    def probe(self, world_json: str) -> dict[str, Any]:
+        """One probe. `world_json` is a serialized WorldConfig (already clamped by app/)."""
+        t0 = time.monotonic()
+        result = self.rt.run(json.loads(world_json))
+        result["timings_s"]["container_ready_s"] = 0.0
+        result["timings_s"]["snapshot_prep_s"] = self.snap_prep_s
+        result["timings_s"]["total_s"] = round(time.monotonic() - t0, 3)
+        checkpoints.commit()
+        return result
 
 
 @app.function(image=probe_image, gpu=PROBE_GPU, timeout=600, volumes={VOLUME_MOUNT: checkpoints})
@@ -200,14 +162,27 @@ def model_leaf_audit() -> list[str]:
 
     rt = ProbeRuntime.get(run_id=RUN_ID, checkpoint=CHECKPOINT, volume_root=None)
     out: list[str] = []
-    for path, leaf in jax.tree_util.tree_leaves_with_path(rt.base_model):
+    leaves = jax.tree_util.tree_leaves_with_path(rt.base_model)
+    out.append(f"model leaves: {len(leaves)}")
+    kinds: dict[str, int] = {}
+    for path, leaf in leaves:
         name = jax.tree_util.keystr(path)
+        if not hasattr(leaf, "shape"):
+            out.append(f"NON-ARRAY LEAF {name}: {type(leaf).__name__} {str(leaf)[:60]}")
+            continue
         arr = np.asarray(leaf)
-        if arr.dtype.kind in "iu" and arr.size in (12, 14, 18, 40, 1):
-            vals = arr.ravel()[:6].tolist()
-            big = any(abs(int(v)) > 1_000_000 for v in arr.ravel().tolist())
-            if big:
-                out.append(f"{name} {arr.dtype} {arr.shape} sample={vals}")
+        kinds[str(arr.dtype)] = kinds.get(str(arr.dtype), 0) + 1
+        if (
+            arr.dtype.kind in "iu"
+            and arr.size
+            and abs(arr.ravel().astype(np.int64)).max() > 1 << 20
+        ):
+            out.append(f"BIG-INT LEAF {name} {arr.dtype} {arr.shape} max={int(abs(arr).max())}")
+    out.append(f"dtype census: {kinds}")
+    # env-level state that the closure captures: anything with pointer-like ints?
+    for attr in ("_mjx_model", "mjx_model", "_mj_model", "mj_model"):
+        obj = getattr(rt.env, attr, None)
+        out.append(f"env.{attr}: {type(obj).__name__}")
     return out
 
 
@@ -220,7 +195,7 @@ def measure(cold_starts: int = 5, warm_calls: int = 20) -> None:
     def call(seed: int) -> dict[str, Any]:
         w = WorldConfig.clamped(friction=0.5, push_magnitude_pct_bw=90.0, seed=seed)
         t0 = time.monotonic()
-        r = probe.remote(w.model_dump_json())
+        r = Probe().probe.remote(w.model_dump_json())
         r["client_wall_s"] = round(time.monotonic() - t0, 3)
         return r
 
