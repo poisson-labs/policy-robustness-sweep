@@ -75,3 +75,19 @@ lever 2's target), log ≤ 0.6 s.
 
 Reading: warm is now dominated by Modal request overhead (~1 s), not by our code. The
 cold miss is entirely the residual GPU compile inside "sim".
+
+## Lever 2 — XLA GPU autotuning off (`xla_gpu_autotune_level=0`) — measured, REVERTED
+
+Build-time compile fell 97.6 → 82.2 s (autotuning ≈ 15 s of the one-time compile), but
+on genuinely cold containers **sim stayed 18.4–20.7 s** (one 11.3 s), warm sim unchanged
+at 0.55 s. Cold p50 39.3 s / p95 68.9 s (one start hit 34 s runtime-init + 39 s
+container-ready — image-pull/host variance, the largest single cold cost observed).
+Conclusion: the residual cold cost is NOT autotuning; autotune-off buys nothing at
+runtime and forgoes an optimization → reverted. Study note: one "cold" row (0.5 s sim)
+was a container that had not scaled down in 75 s — real cold starts are the ≥18 s rows.
+
+Where cold time actually goes (from the three clean cold rows): container ready
+6.3–9.1 s, runtime init 2.6–2.9 s, sim 18.4–20.7 s (residual compile/cache-load),
+Modal overhead ~5–8 s. Next levers: (a) audit whether the persistent cache is being HIT
+at all in the serving process (log JAX cache hits/misses on cold), (b) memory snapshot
+for container-ready + init.

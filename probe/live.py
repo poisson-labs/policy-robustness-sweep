@@ -78,8 +78,11 @@ probe_image = (
             # 18 s of cold "sim" measured in Session 24. Needs ptxas on PATH (below).
             # XLA kernel-cache persistence ("ENABLE_XLA_CACHES=all") is OFF: its
             # subprocess ptxas/linker path fails in this image even with ptxas on PATH
-            # and XLA's own suggested flag (builds 1,3,4 — Session 24/25). Time-boxed;
-            # cold compile is attacked via autotune level instead (measured).
+            # and XLA's own suggested flag (builds 1,3,4 — Session 24/25). Time-boxed.
+            # Lever 2 (autotune_level=0) MEASURED and REVERTED: cold sim stayed
+            # 18-21 s on genuinely cold containers, warm sim unchanged — the residual
+            # cold cost is not autotuning (DEVLOG Session 25). Next lever: memory
+            # snapshot (container-ready + runtime-init) and a compile-cache hit audit.
         }
     )
     # Policy params baked into the image so warm-up (no Volume at build) and serving
