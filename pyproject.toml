@@ -8,6 +8,7 @@ dependencies = [
     "modal>=1.5.4",
     "pydantic>=2.13.4",
     "rerun-sdk==0.36.0",
+    "scipy>=1.18.0",
 ]
 
 [dependency-groups]

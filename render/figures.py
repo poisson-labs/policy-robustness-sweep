@@ -29,6 +29,7 @@ from matplotlib import colormaps
 REPO = Path(__file__).parent.parent
 MANIFEST = REPO / "docs/measurements/2026-08-13-cell-survival-manifest.json"
 SELECTION = REPO / "docs/measurements/2026-08-14-replay-selection.json"
+BOUNDARY = REPO / "docs/measurements/2026-08-15-boundary-uncertainty.json"
 OUT_DIR = REPO / "docs/measurements/figures"
 
 CMAP = colormaps["YlOrRd"]
@@ -81,6 +82,13 @@ def render(variant: str) -> list[Path]:
             "outlined = selected replay cells · ◆ = recovery replays"
         )
         xlabel = "push magnitude (% bodyweight; 100% = 125.0 N)"
+    elif variant == "ribbon":
+        title = "Where the boundary is — and how sure we are"
+        subtitle = (
+            "S = 0.5 crossing per friction row · 95% CI from 2000 seed-bootstrap resamples · "
+            "16 attempts per cell"
+        )
+        xlabel = "push magnitude (% bodyweight)"
     else:
         title = "One policy, 400 worlds: where the robot falls"
         subtitle = "failure = torso below 0.15 m or tilted past 60° · 16 attempts per cell"
@@ -112,8 +120,33 @@ def render(variant: str) -> list[Path]:
                 markeredgewidth=1.6,
             )
 
-    if variant == "hero":
-        # quiet regime annotations
+    if variant == "ribbon":
+        # Bootstrap boundary as a RIBBON (95% CI band across friction rows), never a
+        # line — the uncertainty is per-row and visibly varies (M1.6-A).
+        bnd = json.loads(BOUNDARY.read_text())
+        ys, med, lo, hi = [], [], [], []
+        for row in bnd["rows"]:
+            if "median_pct_bw" not in row:
+                continue  # sentinel rows (no boundary in range) draw nothing
+            ys.append(mus.index(row["mu"]) + 0.5)
+            med.append(pushes.index(10.0) + (row["median_pct_bw"] - 10.0) / 10.0 + 0.5)
+            lo.append(pushes.index(10.0) + (row["ci95_pct_bw"][0] - 10.0) / 10.0 + 0.5)
+            hi.append(pushes.index(10.0) + (row["ci95_pct_bw"][1] - 10.0) / 10.0 + 0.5)
+        ax.fill_betweenx(ys, lo, hi, color="#1d4ed8", alpha=0.22, linewidth=0)
+        ax.plot(med, ys, color="#1d4ed8", lw=1.6, alpha=0.9)
+        # label in the light (safe) region, left of the band, where it is legible
+        ax.text(
+            2.0,
+            mus.index(0.85) + 0.5,
+            "boundary (S = 0.5)\nwith 95% bootstrap CI",
+            fontsize=8.5,
+            color="#1d4ed8",
+            va="center",
+        )
+
+    if variant in ("hero", "ribbon"):
+        # quiet regime annotations (the "transition band" label is redundant with the
+        # ribbon itself, so the ribbon variant draws only the ice arrow)
         ax.annotate(
             "ice: walking fails unaided",
             xy=(1.2, 1.4),
@@ -123,16 +156,17 @@ def render(variant: str) -> list[Path]:
             style="italic",
             arrowprops={"arrowstyle": "->", "color": INK_MUTED, "lw": 1.0},
         )
-        ax.text(
-            4.6,
-            9.0,
-            "transition band",
-            fontsize=9,
-            color=INK_MUTED,
-            style="italic",
-            rotation=72,
-            ha="center",
-        )
+        if variant == "hero":
+            ax.text(
+                4.6,
+                9.0,
+                "transition band",
+                fontsize=9,
+                color=INK_MUTED,
+                style="italic",
+                rotation=72,
+                ha="center",
+            )
         fig.text(
             0.86,
             0.055,
@@ -195,7 +229,7 @@ def render(variant: str) -> list[Path]:
 
 
 def main() -> int:
-    written = render("repo") + render("hero")
+    written = render("repo") + render("hero") + render("ribbon")
     for path in written:
         print(path.relative_to(REPO))
     return 0
