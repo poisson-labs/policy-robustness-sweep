@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>G5 viewer test (production shape) — One Policy, 400 Worlds</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #0d0d10; color: #ddd;
+                 font-family: system-ui, sans-serif; }
+    #bar { padding: 8px 12px; font-size: 13px; display: flex; gap: 16px;
+           align-items: baseline; flex-wrap: wrap; }
+    #viewer { position: absolute; top: 40px; bottom: 0; left: 0; right: 0; }
+    #status b { color: #7dd3fc; }
+  </style>
+</head>
+<body>
+  <div id="bar">
+    <span>G5 test — production shape: same-origin /api proxy + vendored viewer 0.36.0</span>
+    <span id="status">loading…</span>
+    <span id="iso"></span>
+  </div>
+  <div id="viewer"></div>
+  <script type="module">
+    // Production-shape URLs (M2-03): the page is served from the Netlify site origin;
+    // .rrd comes through /api/rrd (proxied to Modal); wasm from /one-policy-400-worlds/vendor.
+    const t0 = performance.now();
+    const status = document.getElementById("status");
+    document.getElementById("iso").textContent =
+      `crossOriginIsolated=${self.crossOriginIsolated} (COOP/COEP)`;
+    const params = new URLSearchParams(location.search);
+    const rrdParam = params.get("rrd") ?? "/api/rrd/v1_mu-0.3500_push-80.00_dir-90.00_t0-2.00_seed-1002181.rrd";
+    const rrd = new URL(rrdParam, location.origin).href;
+    try {
+      const { WebViewer } = await import("/one-policy-400-worlds/vendor/rerun/index.js");
+      const viewer = new WebViewer();
+      await viewer.start(rrd, document.getElementById("viewer"), { hide_welcome_screen: true });
+      const load_ms = Math.round(performance.now() - t0);
+      const mem = performance.memory
+        ? ` · JS heap ${(performance.memory.usedJSHeapSize / 1048576).toFixed(0)} MB`
+        : "";
+      status.innerHTML = `viewer started in <b>${load_ms} ms</b>${mem}`;
+    } catch (err) {
+      status.textContent = `FAILED: ${err}`;
+      console.error(err);
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,34 @@
+# --- One Policy, 400 Worlds: stanzas to MERGE into the Astro site's netlify.toml ---
+# (poisson-labs-site has no netlify.toml today; if creating it fresh, keep the site's
+# own build block at top and append these.)
+
+# 1) /api/* → the Modal app (same-origin for the browser; no CORS, no exposed host).
+#    Netlify proxies with status 200 (a rewrite, not a redirect).
+[[redirects]]
+  from = "/api/*"
+  to = "https://<modal-workspace>--opw-app-serve.modal.run/:splat"
+  status = 200
+  force = true
+
+# 2) COOP/COEP on the artifact pages so the Rerun wasm viewer can use
+#    SharedArrayBuffer (multithreaded wasm) — scoped to the artifact path only,
+#    because cross-origin isolation would break the site's other embeds/fonts.
+[[headers]]
+  for = "/one-policy-400-worlds/*"
+  [headers.values]
+    Cross-Origin-Opener-Policy = "same-origin"
+    Cross-Origin-Embedder-Policy = "require-corp"
+    Cross-Origin-Resource-Policy = "same-origin"
+
+# 3) The research post route that embeds the artifact needs the same isolation.
+[[headers]]
+  for = "/research/one-policy-400-worlds"
+  [headers.values]
+    Cross-Origin-Opener-Policy = "same-origin"
+    Cross-Origin-Embedder-Policy = "require-corp"
+
+# 4) wasm + rrd caching (immutable, content-addressed by version dir)
+[[headers]]
+  for = "/one-policy-400-worlds/vendor/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
