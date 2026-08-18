@@ -38,6 +38,19 @@ CACHE_DIR = "/jax-cache"
 PROBE_GPU = "A100-80GB"
 
 
+def _expose_ptxas() -> None:
+    """Image-build step: put the pip-wheel ptxas (nvidia-cuda-nvcc-cu12, already
+    installed by jax[cuda12]) on PATH so XLA's kernel-cache subprocess mode can spawn
+    it (Session 24: ENABLE_XLA_CACHES=all failed with RET_CHECK process.Start())."""
+    import glob
+    import os
+
+    hits = glob.glob("/usr/local/lib/python3.12/site-packages/nvidia/cuda_nvcc/bin/ptxas")
+    assert hits, "ptxas not found in the nvidia-cuda-nvcc wheel"
+    os.symlink(hits[0], "/usr/local/bin/ptxas")
+    print("ptxas exposed:", hits[0])
+
+
 def _warm_compile_cache() -> None:
     """Image-build step: run one probe end-to-end so every jit/scan is compiled into the
     persistent cache baked into this layer."""
@@ -61,16 +74,20 @@ probe_image = (
         {
             "JAX_COMPILATION_CACHE_DIR": CACHE_DIR,
             "JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS": "0",
-            # NOT "ENABLE_XLA_CACHES=all": its kernel-cache mode compiles via a ptxas
-            # subprocess that fails to start in this image (first build: RET_CHECK
-            # subprocess_compilation.cc). The JAX-level executable cache is what skips
-            # the ~100 s compile; the XLA autotune cache stays at its default.
+            # "all" also persists XLA's GPU kernel + autotune caches — the residual
+            # 18 s of cold "sim" measured in Session 24. Needs ptxas on PATH (below).
+            # XLA kernel-cache persistence ("ENABLE_XLA_CACHES=all") is OFF: its
+            # subprocess ptxas/linker path fails in this image even with ptxas on PATH
+            # and XLA's own suggested flag (builds 1,3,4 — Session 24/25). Time-boxed;
+            # cold compile is attacked via autotune level instead (measured).
         }
     )
     # Policy params baked into the image so warm-up (no Volume at build) and serving
     # (no Volume read on the hot path) both load from disk instantly.
     .add_local_dir("probe/params", remote_path="/params", copy=True)
     .add_local_python_source("train", "sweep", "configs", "probe", "reduce", copy=True)
+    # run_function steps import this module in-container → local source must already
+    # be present (first attempt ordered these the other way: ModuleNotFoundError).
     .run_function(_warm_compile_cache, gpu=PROBE_GPU)
 )
 

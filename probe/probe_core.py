@@ -138,10 +138,9 @@ class ProbeRuntime:
         from configs.world import PUSH_DURATION_S, WorldConfig
         from probe.rrd_logger import (
             log_event,
-            log_push_arrow,
-            log_scalars,
+            log_push_arrow_columns,
             log_static_scene,
-            log_step,
+            log_trajectory_columns,
             replay_blueprint,
         )
         from reduce.classify import Outcome, classify_rollout
@@ -177,15 +176,20 @@ class ProbeRuntime:
                 f"FAILURE ({outcome.first_trigger}) — TTF {outcome.ttf_s:.2f}s",
                 "ERROR",
             )
+        # Kinematics on CPU (mj_forward per step), then ONE columnar send per entity
+        # (M2-01b): the per-geom-per-step rr.log loop cost ~4.3 s per warm probe.
+        ngeom = self.mj_model.ngeom
+        geom_xpos = np.empty((self.steps, ngeom, 3))
+        geom_xmat = np.empty((self.steps, ngeom, 9))
+        torso_xyz = np.empty((self.steps, 3))
         for i in range(self.steps):
             mj_data.qpos[:] = qpos_arr[i]
             mujoco.mj_forward(self.mj_model, mj_data)
-            t_s = float(times[i])
-            log_step(self.mj_model, mj_data, t_s)
-            log_scalars(t_s, float(torso_z[i]), float(upz[i]))
-            log_push_arrow(
-                t_s, bool(active[i]), mj_data.xpos[self.torso_id].tolist(), float(vx), float(vy)
-            )
+            geom_xpos[i] = mj_data.geom_xpos
+            geom_xmat[i] = mj_data.geom_xmat
+            torso_xyz[i] = mj_data.xpos[self.torso_id]
+        log_trajectory_columns(self.mj_model, geom_xpos, geom_xmat, times, torso_z, upz)
+        log_push_arrow_columns(times, active, torso_xyz, float(vx), float(vy))
         rrd_dir = Path("/vol/rrd")
         rrd_dir.mkdir(parents=True, exist_ok=True)
         safe_key = world.cache_key().replace("|", "_").replace("=", "-")

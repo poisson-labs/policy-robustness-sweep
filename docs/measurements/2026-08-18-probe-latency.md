@@ -56,3 +56,22 @@ logging 4.2 s, function total 30.4 s, wall 37.8 s. Warm-up at image build had re
    step; measure.
 3. Memory snapshot (`enable_memory_snapshot`, G1 finding: "3–10×" claimed) as the
    reserve lever for container-ready + runtime-init (~9.7 s together).
+
+## Lever 1 — columnar Rerun logging (measured 2026-08-18, same study design)
+
+Change: per-geom-per-step `rr.log` loop (~7500 calls) → `rr.send_columns` per entity
+(~30 calls) + columnar arrow. Compile-cache config unchanged (JAX executable cache; the
+XLA kernel-cache mode was time-boxed after three failed builds — see DEVLOG Session 25).
+
+| | n | p50 | p95 | max | budget |
+|---|---|---|---|---|---|
+| cold | 5 | 35.4 s | 37.5 s | 37.5 s | < 20 s |
+| warm | 20 | **1.8 s** | **2.1 s** | 2.1 s | < 10 s |
+
+Warm breakdown: sim 0.56 s, **log 0.21–0.27 s** (was 4.1–4.5 s), function total
+0.77–0.84 s, wall 1.6–2.1 s. Cold breakdown unchanged in shape: container ready
+5.6–9.7 s, runtime init 2.0–3.8 s, **sim 12.2–21.1 s** (the residual compile —
+lever 2's target), log ≤ 0.6 s.
+
+Reading: warm is now dominated by Modal request overhead (~1 s), not by our code. The
+cold miss is entirely the residual GPU compile inside "sim".
