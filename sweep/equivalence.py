@@ -207,20 +207,39 @@ def run_equivalence(
     train_n = num_eval_envs  # training eval used num_eval_envs=128 (brax default; recipe)
 
     stat_key = jax.random.PRNGKey(stat_seed)
-    our_means: list[float] = []
-    our_stds: list[float] = []
+    inj_means: list[float] = []
+    inj_stds: list[float] = []
+    nat_means: list[float] = []
+    nat_stds: list[float] = []
     for _ in range(repeats):
-        stat_key, sub = jax.random.split(stat_key)
-        metrics = evaluate(injected_env(), sub)
-        our_means.append(metrics["eval/episode_reward"])
-        our_stds.append(metrics["eval/episode_reward_std"])
-    pooled_mean = sum(our_means) / repeats
-    mean_std = sum(our_stds) / repeats
+        stat_key, k1, k2 = jax.random.split(stat_key, 3)
+        mi = evaluate(injected_env(), k1)
+        mn = evaluate(native_env(), k2)
+        inj_means.append(mi["eval/episode_reward"])
+        inj_stds.append(mi["eval/episode_reward_std"])
+        nat_means.append(mn["eval/episode_reward"])
+        nat_stds.append(mn["eval/episode_reward_std"])
+    pooled_mean = sum(inj_means) / repeats
+    mean_std = sum(inj_stds) / repeats
+
+    # Context check (NOT gated): our nominal harness vs the training-time eval. For a
+    # perturbation-trained checkpoint the training eval uses a different protocol (kicks
+    # on), so a mismatch here is EXPECTED and is not evidence of a harness fault.
     se_train = train_std / (train_n**0.5)
     se_ours = mean_std / ((num_eval_envs * repeats) ** 0.5)
-    gate = STAT_GATE_SIGMA * (se_train**2 + se_ours**2) ** 0.5
-    stat_diff = abs(pooled_mean - train_mean)
-    stat_pass = stat_diff <= gate
+    train_gate = STAT_GATE_SIGMA * (se_train**2 + se_ours**2) ** 0.5
+    train_diff = abs(pooled_mean - train_mean)
+
+    # THE GATE (protocol-matched, checkpoint-agnostic): native harness vs injected
+    # harness, both in the nominal eval env, K repeats — the correct "is my sweep
+    # executor faithful to the plain env" question. Independent of how the policy was
+    # trained.
+    nat_pooled = sum(nat_means) / repeats
+    nat_mean_std = sum(nat_stds) / repeats
+    se_nat = nat_mean_std / ((num_eval_envs * repeats) ** 0.5)
+    matched_gate = STAT_GATE_SIGMA * (se_nat**2 + se_ours**2) ** 0.5
+    matched_diff = abs(pooled_mean - nat_pooled)
+    stat_pass = matched_diff <= matched_gate
 
     report = {
         "run_id": run_id,
@@ -249,14 +268,26 @@ def run_equivalence(
             "injected_avg_episode_length": injected_metrics["eval/avg_episode_length"],
         },
         "statistical_check": {
-            "training_final_mean": train_mean,
-            "training_final_std": train_std,
-            "our_means": our_means,
-            "pooled_mean": pooled_mean,
-            "abs_diff": stat_diff,
-            "gate": gate,
+            "kind": "matched-protocol: native harness vs injected harness, nominal env",
+            "injected_means": inj_means,
+            "injected_pooled": pooled_mean,
+            "native_means": nat_means,
+            "native_pooled": nat_pooled,
+            "abs_diff": matched_diff,
+            "gate": matched_gate,
             "gate_sigma": STAT_GATE_SIGMA,
             "passed": stat_pass,
+        },
+        "training_eval_context": {
+            "note": "NOT gated — training eval protocol can differ from the nominal "
+            "sweep protocol (v1 trains with velocity kicks); a mismatch here is expected "
+            "for pert-trained checkpoints and is not a harness fault.",
+            "training_final_mean": train_mean,
+            "training_final_std": train_std,
+            "our_nominal_pooled": pooled_mean,
+            "abs_diff": train_diff,
+            "gate_if_it_were_gated": train_gate,
+            "within_gate": train_diff <= train_gate,
         },
         "passed": bool(replay_check["passed"]) and stat_pass,
     }

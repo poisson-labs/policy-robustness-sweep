@@ -1,0 +1,76 @@
+{
+  "run_id": "20260818T230622Z-v1",
+  "checkpoint": "converged",
+  "env_name": "Go1JoystickFlatTerrain",
+  "protocol": {
+    "num_eval_envs": 128,
+    "episode_length": 1000,
+    "stochastic_policy": true,
+    "repeats": 5,
+    "exact_seed": 1234,
+    "stat_seed": 5678
+  },
+  "nominal_world": {
+    "friction": null,
+    "push_magnitude_pct_bw": 0.0,
+    "push_direction_deg": 90.0,
+    "push_start_s": 2.0,
+    "seed": 0
+  },
+  "model": {
+    "torso_body": "trunk",
+    "robot_mass_kg": 12.743448,
+    "gravity_m_s2": 9.81
+  },
+  "replay_check": {
+    "steps_compared": 500,
+    "first_step_max_qpos_diff": 0.0,
+    "max_qpos_diff": 0.0,
+    "max_qvel_diff": 0.0,
+    "tolerance": 1e-09,
+    "passed": true,
+    "note": "wrapper stepped from NATIVE states with identical actions; diffs are single-step physics deltas, not closed-loop divergence"
+  },
+  "same_seed_evaluator_diagnostic": {
+    "reward_native": 24.00848388671875,
+    "reward_injected_identity": 24.027111053466797,
+    "relative_diff": 0.000775857685805443,
+    "gated": false,
+    "note": "diagnostic only \u2014 measures GPU-nondeterminism amplification, not harness difference (native-vs-native varies comparably across runs; see equivalence-report.md); physics equivalence is the replay check",
+    "native_avg_episode_length": 1000.0,
+    "injected_avg_episode_length": 1000.0
+  },
+  "statistical_check": {
+    "kind": "matched-protocol: native harness vs injected harness, nominal env",
+    "injected_means": [
+      23.330276489257812,
+      23.372207641601562,
+      24.30739974975586,
+      23.487716674804688,
+      23.7967529296875
+    ],
+    "injected_pooled": 23.658870697021484,
+    "native_means": [
+      23.299819946289062,
+      23.74549102783203,
+      24.426620483398438,
+      24.368968963623047,
+      23.877731323242188
+    ],
+    "native_pooled": 23.943726348876954,
+    "abs_diff": 0.28485565185546946,
+    "gate": 0.7593253031730385,
+    "gate_sigma": 3.0,
+    "passed": true
+  },
+  "training_eval_context": {
+    "note": "NOT gated \u2014 training eval protocol can differ from the nominal sweep protocol (v1 trains with velocity kicks); a mismatch here is expected for pert-trained checkpoints and is not a harness fault.",
+    "training_final_mean": 19.67350196838379,
+    "training_final_std": 5.741359233856201,
+    "our_nominal_pooled": 23.658870697021484,
+    "abs_diff": 3.9853687286376953,
+    "gate_if_it_were_gated": 1.6128961131804798,
+    "within_gate": false
+  },
+  "passed": true
+}
