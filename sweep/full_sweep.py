@@ -55,7 +55,12 @@ app = modal.App("opw-sweep")
     timeout=2 * 3600,
     volumes={VOLUME_MOUNT: checkpoints},
 )
-def run_sweep(run_id: str, checkpoint: str = "converged") -> dict[str, Any]:
+def run_sweep(
+    run_id: str, checkpoint: str = "converged", seeds_per_cell: int = SEEDS_PER_CELL
+) -> dict[str, Any]:
+    """`seeds_per_cell` overrides the v0 default (16) — M1.5 runs 32v32 (Session 23
+    power math). Rollout indexing keeps the SAME formula with the larger stride, so
+    v0-at-32 and v1-at-32 use identical seeds cell-for-cell (diff hygiene)."""
     import time
     from pathlib import Path
 
@@ -114,8 +119,8 @@ def run_sweep(run_id: str, checkpoint: str = "converged") -> dict[str, Any]:
     cells: list[dict[str, Any]] = []
     for mi, mu in enumerate(GRID_MUS):
         for pi, pct in enumerate(GRID_PUSH_PCTS):
-            for s in range(SEEDS_PER_CELL):
-                r = (mi * len(GRID_PUSH_PCTS) + pi) * SEEDS_PER_CELL + s
+            for s in range(seeds_per_cell):
+                r = (mi * len(GRID_PUSH_PCTS) + pi) * seeds_per_cell + s
                 mus_flat.append(mu)
                 forces_flat.append(pct / 100.0 * mass_kg * g)
                 seeds_flat.append(SEED_BASE + r)
@@ -216,8 +221,9 @@ def run_sweep(run_id: str, checkpoint: str = "converged") -> dict[str, Any]:
         "grid": {
             "mus": GRID_MUS,
             "push_pcts_bw": GRID_PUSH_PCTS,
-            "seeds_per_cell": SEEDS_PER_CELL,
-            "seed_scheme": f"PRNGKey({SEED_BASE} + rollout_index)",
+            "seeds_per_cell": seeds_per_cell,
+            "seed_scheme": f"PRNGKey({SEED_BASE} + rollout_index); rollout_index = "
+            f"(mu_idx*20 + push_idx)*{seeds_per_cell} + seed_idx",
             "total_rollouts": total,
         },
         "protocol": {
@@ -246,5 +252,10 @@ def run_sweep(run_id: str, checkpoint: str = "converged") -> dict[str, Any]:
 
 
 @app.local_entrypoint()
-def main(run_id: str, checkpoint: str = "converged") -> None:
-    print(json.dumps(run_sweep.remote(run_id=run_id, checkpoint=checkpoint), indent=2))
+def main(run_id: str, checkpoint: str = "converged", seeds_per_cell: int = SEEDS_PER_CELL) -> None:
+    print(
+        json.dumps(
+            run_sweep.remote(run_id=run_id, checkpoint=checkpoint, seeds_per_cell=seeds_per_cell),
+            indent=2,
+        )
+    )
