@@ -92,6 +92,8 @@ uv run modal run probe/instrumented.py --run-id <run-id> --mu 0.5 --push-pct 90 
 uv run modal deploy app/server.py                           # the probe app
 ```
 
+The Modal workspace name is not recorded here; the measurement records and the Netlify stanza show `<modal-workspace>`, and `sed "s|<modal-workspace>|${MODAL_WORKSPACE:?}|" web/bundle/netlify/netlify.toml.stanza` fills the stanza in from `MODAL_WORKSPACE`.
+
 ## Version pins
 
 Local Python versions are in `uv.lock`. The Modal training image (`train/modal_app.py`) pins the packages below,
