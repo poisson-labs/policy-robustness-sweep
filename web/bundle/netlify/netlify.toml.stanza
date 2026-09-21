@@ -4,6 +4,7 @@
 
 # 1) /api/* → the Modal app (same-origin for the browser; no CORS, no exposed host).
 #    Netlify proxies with status 200 (a rewrite, not a redirect).
+#    Replace <modal-workspace> with the Modal workspace the app is deployed in.
 [[redirects]]
   from = "/api/*"
   to = "https://<modal-workspace>--opw-app-serve.modal.run/:splat"
