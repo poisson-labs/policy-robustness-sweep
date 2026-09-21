@@ -28,3 +28,9 @@ probe/params/
 
 # Fetched viewer assets in the bundle (reproduced by scripts/fetch_viewer.sh)
 web/bundle/public/one-policy-400-worlds/vendor/
+
+# Devlogs live in the vault only (docs/repo-hygiene.md, section 2.7)
+devlog.md
+
+# Local tool state
+.claude/
