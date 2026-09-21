@@ -102,7 +102,7 @@ Components (all Modal-deployed unless noted):
 
 - Layout: `train/ sweep/ probe/ reduce/ app/ web/ analytics/ docs/` with config-schema module shared by sweep and probe (single source of truth for perturbation semantics).
 - One-command reproduce: `make sweep` (or equivalent) from pinned image → manifest byte-comparable modulo documented nondeterminism.
-- No premature framework extraction: build this project concretely; the pattern library is extracted after the drone project by diffing (thesis doc §7.4).
+- No premature framework extraction: build this project concretely; the pattern library is extracted after the drone project by diffing.
 - Analytics/probe-log schema designed for v1.1 crowd layer (append-only records: config, outcome, timestamp; no identity).
 
 ## 11. Launch Kit (deliverables alongside code)
@@ -112,15 +112,7 @@ Components (all Modal-deployed unless noted):
 - Show HN draft + thread skeleton (link post; artifact does the talking).
 - Devlog stubs: training run, first cold-start replay, sweep receipt, launch-day traffic (from analytics).
 
-## 12. Milestones
-
-- **M0 Gates:** §4 G1→G5 in order. Deliverables: verification doc, checkpoint(s), equivalence report, sweep dataset, mobile decision.
-- **M1 Data layer:** reduce/ (manifest, statistics incl. censoring, boundary selection, solver-sensitivity slice), instrumented replays; render/ (failure clips, ghost overlays, composites, mobile-fallback clips).
-- **M2 Serving:** app/ endpoints, caching, limits, degradation mode, receipt instrumentation, static mirror export.
-- **M3 Frontend:** heatmap, sliders/dial/timing, schematic, pinned viewer embed, URL sharing, mobile mode, status line.
-- **M4 Hardening:** latency budget verification, spend-cap drill (simulate cap hit), cross-device pass, analytics, license/attribution audit.
-- **M5 Launch kit + post assembly:** composites final, receipt final (measured), draft claims audit (§8), static mirror live.
-- **M6 (v1.1, post-launch):** crowd layer — persistence read path, dot overlay, "closest call" line, second announcement beat.
+## 12. Acceptance (v1)
 
 Acceptance for v1 = the two definitions of done: a stranger on mobile can probe a world and see cost; every number measured; degradation drill passed.
 
