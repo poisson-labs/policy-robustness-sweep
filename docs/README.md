@@ -8,7 +8,6 @@
 | [`dr-record-go1-training.json`](dr-record-go1-training.json), [`dr-record-go1-training-v1.json`](dr-record-go1-training-v1.json) | The domain-randomisation source and configuration each policy was trained with, captured verbatim. They embed Apache-2.0 source text; see [`../NOTICE`](../NOTICE). |
 | [`measurements/`](measurements/) | Measured outputs: sweep manifests, reports, the v0 → v1 comparison and the figures. |
 | [`drafts/`](drafts/) | Where post drafts are kept. `ci/check_measured_numbers.py` scans it. |
-| [`TASKS.md`](TASKS.md), [`NOTES.md`](NOTES.md), [`audit-2026-08-15.md`](audit-2026-08-15.md) | Working documents from the build: a task list, notes and open questions, and an audit at the end of M1. They describe the work as it stood on the dates they carry and are not kept up to date. |
 | [`repo-hygiene.md`](repo-hygiene.md) | The Poisson Labs repository standard this repository follows. |
 
 ## Reading the references in these documents
@@ -20,9 +19,9 @@ hardening, `M5` the launch kit and `M6` the crowd layer planned for after launch
 task within the milestone. Source comments that cite "spec §12" mean this milestone list, which the spec no longer
 carries: section 12 there is now the v1 acceptance line.
 
-**References that do not resolve.** Some documents and source comments cite "DEVLOG Session N" and "kickoff §N".
-They refer to the author's working log and to the build brief the project started from. Neither is part of this
-repository.
+**References that do not resolve.** Some documents and source comments cite "DEVLOG Session N", "kickoff §N",
+`NOTES.md` and `TASKS.md`. They refer to the author's working log, to the build brief the project started from,
+and to the notes and the task list kept during the build. None of them is in the tree.
 
 **`MEASURED_TBD`.** A number written `MEASURED_TBD` had not been measured when the document was written.
 `ci/check_measured_numbers.py` requires every number in a post draft to carry a `measured:` source tag or that
