@@ -15,5 +15,4 @@
 ## Docs
 
 - [ ] docs/TASKS.md status updated
-- [ ] docs/DEVLOG.md entry added (incl. DECISION: lines for any non-obvious choice)
 - [ ] docs/NOTES.md updated (if research/questions surfaced)
