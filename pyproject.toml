@@ -3,6 +3,9 @@ name = "policy-robustness-sweep"
 version = "0.0.1"
 description = "One Policy, 400 Worlds — quadruped failure-boundary sweep with a live probe artifact (Poisson Labs flagship)"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "Taylor Kolasinski", email = "work@poissonlabs.ai" }]
 requires-python = ">=3.12"
 dependencies = [
     "fastapi[standard]==0.141.1",
@@ -11,6 +14,10 @@ dependencies = [
     "rerun-sdk==0.36.0",
     "scipy>=1.18.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/poisson-labs/policy-robustness-sweep"
+Issues = "https://github.com/poisson-labs/policy-robustness-sweep/issues"
 
 [dependency-groups]
 dev = [
