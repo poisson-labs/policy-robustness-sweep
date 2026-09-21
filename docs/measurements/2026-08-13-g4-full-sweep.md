@@ -16,7 +16,11 @@ up-vector criterion; §5 TTF/thresholds freeze in M0-07 from the logged tracks.
 - Total sweep compute wall ≈ **126 s** on one A100-80GB for 6400 × 5 s rollouts
 - Memory: 1600 parallel envs (batched only in geom_friction on the model axis) ran
   without incident; no OOM at this chunk size (larger untested — no need)
-- Cost: MEASURED_TBD (dashboard, app opw-sweep)
+- Cost: **$0.087, list-derived, not billed** — 125.74 s of A100-80GB at $0.000694/s
+  (measured: this file's chunk walls × docs/modal-verification.md §3 rate). Billing read
+  2026-09-15 (DEVLOG Session 31): the Modal console bills per cycle, not per app, so
+  `opw-sweep` has no separable number — cycle Aug 1 – Sep 1 2026 was $40.14 usage /
+  $10.14 after credits across all work
 
 ## Fall counts per cell (fell/16, provisional up-z criterion)
 

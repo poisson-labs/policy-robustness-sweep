@@ -15,8 +15,10 @@ axis.
 | half_dt | 0.002 | 1 | 93.33 | +6.66 vs baseline |
 | double_iters | 0.004 | 2 | 103.33 | +16.66 vs baseline |
 
-Wall per setting ≈ 9–11 s (measured). Cost: MEASURED_TBD (dashboard, app
-opw-solver-slice).
+Wall per setting ≈ 9–11 s (measured). Cost: **$0.020, list-derived, not billed** — 28.6 s
+of A100-80GB at $0.000694/s (measured: this file's per-setting walls ×
+docs/modal-verification.md §3 rate). Billing read 2026-09-15 (DEVLOG Session 31): the bill
+is per cycle, not per app, so `opw-solver-slice` has no separable number.
 
 ## Reading
 

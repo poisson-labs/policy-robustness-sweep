@@ -25,7 +25,9 @@ and to the notes and the task list kept during the build. None of them is in the
 
 **`MEASURED_TBD`.** A number written `MEASURED_TBD` had not been measured when the document was written.
 `ci/check_measured_numbers.py` requires every number in a post draft to carry a `measured:` source tag or that
-marker. Several cost lines under `measurements/` still carry the marker.
+marker. One line under `measurements/` still carries the marker: the final image's build time in
+`2026-08-13-g2-smoke-run.md`. The cost lines that used to carry it now give list-derived figures, labelled as
+such, because Modal bills per cycle and not per app.
 
 ## The two sweeps and the tests on them
 
